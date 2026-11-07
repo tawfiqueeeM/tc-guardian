@@ -476,6 +476,87 @@
     return generateLocalMockResponse(filteredText);
   }
 
+  /**
+   * Subscription Cancellation Guides Helper
+   * Provides step-by-step instructions and direct settings links for popular subscription domains.
+   */
+  function getDefaultCancellationGuide(domain = '') {
+    const cleanDomain = String(domain || currentDomain || 'current site').toLowerCase().replace(/^www\./, '');
+    const known = {
+      'netflix.com': {
+        domain: 'netflix.com',
+        url: 'https://www.netflix.com/youraccount',
+        steps: [
+          'Go to your Netflix Account page (netflix.com/youraccount)',
+          'Under the "Membership & Billing" section, click "Cancel Membership"',
+          'Select "Finish Cancellation" to confirm and stop recurring billing'
+        ]
+      },
+      'spotify.com': {
+        domain: 'spotify.com',
+        url: 'https://www.spotify.com/account/overview/',
+        steps: [
+          'Log in to your Spotify Account page',
+          'Scroll down to "Your plan" and click "Change plan"',
+          'Scroll to "Cancel Spotify" and click "Cancel Premium"'
+        ]
+      },
+      'adobe.com': {
+        domain: 'adobe.com',
+        url: 'https://account.adobe.com/plans',
+        steps: [
+          'Sign in to account.adobe.com/plans',
+          'Select "Manage plan" for your subscription',
+          'Choose "Cancel your plan" and complete the cancellation steps'
+        ]
+      },
+      'amazon.com': {
+        domain: 'amazon.com',
+        url: 'https://www.amazon.com/mc/manage',
+        steps: [
+          'Go to Amazon Account -> "Your Memberships & Subscriptions"',
+          'Select "Manage Subscription" next to the recurring service',
+          'Click "End Subscription" and follow the confirmation prompts'
+        ]
+      },
+      'quora.com': {
+        domain: 'quora.com',
+        url: 'https://www.quora.com/settings/subscription',
+        steps: [
+          'Navigate to your Quora profile settings -> "Subscriptions"',
+          'Find Quora+ subscription and click "Cancel Subscription"',
+          'Follow the prompts to stop recurring charges'
+        ]
+      },
+      'reddit.com': {
+        domain: 'reddit.com',
+        url: 'https://www.reddit.com/settings/premium',
+        steps: [
+          'Go to Reddit User Settings -> "Subscriptions"',
+          'Under Reddit Premium, click "Manage Subscription"',
+          'Click "Cancel" to deactivate recurring auto-renewal'
+        ]
+      }
+    };
+
+    for (const [k, g] of Object.entries(known)) {
+      if (cleanDomain === k || cleanDomain.endsWith('.' + k)) {
+        return { ...g };
+      }
+    }
+
+    return {
+      domain: cleanDomain || 'this service',
+      url: cleanDomain && cleanDomain !== 'localhost' ? `https://${cleanDomain}` : null,
+      steps: [
+        'Locate your Profile or Avatar icon in the top navigation bar',
+        'Go to "Account Settings", "Billing", or "Subscriptions"',
+        'Look for "Manage Plan", "Auto-Renew", or "Payment Methods"',
+        'Select "Cancel Subscription" or toggle off "Auto-Renew" before your next billing cycle'
+      ]
+    };
+  }
+
   function generateLocalMockResponse(text) {
     const hasDataSale = /sell|broker|third party/i.test(text);
     const hasAiTraining = /train|artificial intelligence|machine learning/i.test(text);
@@ -503,7 +584,8 @@
           present: hasAutoRenew,
           summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.',
           shortSummary: 'Subscriptions renew automatically with non-refundable recurring billing terms.',
-          snippet: hasAutoRenew ? 'Subscription terms automatically renew each billing period and fees are strictly non-refundable.' : ''
+          snippet: hasAutoRenew ? 'Subscription terms automatically renew each billing period and fees are strictly non-refundable.' : '',
+          cancellationGuide: hasAutoRenew ? getDefaultCancellationGuide(currentDomain) : null
         },
         NO_DELETE: {
           present: hasNoDelete,
@@ -535,18 +617,21 @@
       }
 
       if (catData) {
+        const isPresent = Boolean(catData.present);
         normalized[catKey] = {
-          present: Boolean(catData.present),
+          present: isPresent,
           summary: catData.summary || CATEGORY_META[catKey].defaultSummary,
           shortSummary: catData.shortSummary || catData.summary || CATEGORY_META[catKey].defaultSummary,
-          snippet: catData.snippet || ''
+          snippet: catData.snippet || '',
+          cancellationGuide: catData.cancellationGuide || (catKey === 'AUTO_RENEW' && isPresent ? getDefaultCancellationGuide(currentDomain) : null)
         };
       } else {
         normalized[catKey] = {
           present: false,
           summary: CATEGORY_META[catKey].defaultSummary,
           shortSummary: '',
-          snippet: ''
+          snippet: '',
+          cancellationGuide: null
         };
       }
     });
@@ -866,6 +951,83 @@
         background: rgba(59, 130, 246, 0.3);
         color: #ffffff;
         border-color: #60a5fa;
+      }
+
+      .tc-btn-how-to-cancel {
+        background: rgba(245, 158, 11, 0.15);
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        color: #fde68a;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.15s ease;
+      }
+
+      .tc-btn-how-to-cancel:hover,
+      .tc-btn-how-to-cancel.active {
+        background: rgba(245, 158, 11, 0.3);
+        color: #ffffff;
+        border-color: #fbbf24;
+        box-shadow: 0 0 8px rgba(245, 158, 11, 0.35);
+      }
+
+      .tc-cancel-guide-panel {
+        background: rgba(24, 20, 10, 0.95);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        font-size: 12px;
+        animation: tc-fade-in 0.2s ease;
+      }
+
+      .tc-cancel-guide-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 700;
+        color: #fde68a;
+        margin-bottom: 8px;
+        font-size: 12px;
+      }
+
+      .tc-cancel-guide-steps {
+        margin: 0;
+        padding-left: 20px;
+        color: #f1f5f9;
+        font-size: 11.5px;
+        line-height: 1.55;
+      }
+
+      .tc-cancel-step {
+        margin-bottom: 4px;
+      }
+
+      .tc-cancel-guide-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 10px;
+        padding: 6px 12px;
+        background: rgba(245, 158, 11, 0.2);
+        color: #fde68a;
+        text-decoration: none;
+        border-radius: 6px;
+        border: 1px solid rgba(245, 158, 11, 0.45);
+        font-weight: 600;
+        font-size: 11.5px;
+        transition: all 0.15s ease;
+      }
+
+      .tc-cancel-guide-link:hover {
+        background: rgba(245, 158, 11, 0.35);
+        color: #ffffff;
+        border-color: #fbbf24;
       }
 
       .tc-source-preview {
@@ -1192,6 +1354,7 @@
 
       const isDealbreaker = !hasOverride && total > 0 && no >= 2 && (no / total) >= 0.60;
       const sourceSnippet = (sourceClauses && sourceClauses[catKey]) || data.snippet || data.summary || 'Clause text detected in agreement terms.';
+      const cancellationGuide = (catKey === 'AUTO_RENEW') ? (data.cancellationGuide || getDefaultCancellationGuide(currentDomain)) : null;
 
       const riskBadgeClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
       const riskBadgeText = meta.riskLevel === 'HIGH' ? 'HIGH RISK' : (meta.riskLevel === 'LOW' ? 'LOW RISK' : 'MEDIUM RISK');
@@ -1213,9 +1376,16 @@
               <span class="tc-stat-pill">${escapeHtml(statText)}</span>
               ${overrideBadgeHtml}
             </div>
-            <button class="tc-btn-view-clause" data-cat="${catKey}" title="View source clause on page">
-              📖 View Clause
-            </button>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              ${catKey === 'AUTO_RENEW' ? `
+                <button class="tc-btn-how-to-cancel" data-cat="${catKey}" title="View cancellation guide">
+                  💡 How to Stop Auto-Pay
+                </button>
+              ` : ''}
+              <button class="tc-btn-view-clause" data-cat="${catKey}" title="View source clause on page">
+                📖 View Clause
+              </button>
+            </div>
           </div>
 
           <div class="tc-source-preview" id="source-preview-${catKey}" style="display: none;">
@@ -1234,6 +1404,23 @@
               <div class="tc-source-preview-body">"${escapeHtml(sourceSnippet)}"</div>
             </details>
           </div>
+
+          ${catKey === 'AUTO_RENEW' && cancellationGuide ? `
+            <div class="tc-cancel-guide-panel" id="cancel-guide-${catKey}" style="display: none;">
+              <div class="tc-cancel-guide-header">
+                <span>🛑</span>
+                <span>How to Stop Auto-Pay (${escapeHtml(cancellationGuide.domain || currentDomain)})</span>
+              </div>
+              <ol class="tc-cancel-guide-steps">
+                ${cancellationGuide.steps.map(s => `<li class="tc-cancel-step">${escapeHtml(s)}</li>`).join('')}
+              </ol>
+              ${cancellationGuide.url ? `
+                <a class="tc-cancel-guide-link" href="${escapeHtml(cancellationGuide.url)}" target="_blank" rel="noopener noreferrer">
+                  🔗 Direct Subscription Settings &rarr;
+                </a>
+              ` : ''}
+            </div>
+          ` : ''}
 
           <div class="tc-card-actions">
             <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
@@ -1353,6 +1540,23 @@
         if (preview) {
           const isHidden = (preview.style.display === 'none' || !preview.style.display);
           preview.style.display = isHidden ? 'block' : 'none';
+        }
+      });
+    });
+
+    // How to Stop Auto-Pay Guide Listeners
+    root.querySelectorAll('.tc-btn-how-to-cancel').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const catKey = e.currentTarget.getAttribute('data-cat');
+        const panel = root.getElementById(`cancel-guide-${catKey}`);
+        if (panel) {
+          const isHidden = (panel.style.display === 'none' || !panel.style.display);
+          panel.style.display = isHidden ? 'block' : 'none';
+          if (isHidden) {
+            btn.classList.add('active');
+          } else {
+            btn.classList.remove('active');
+          }
         }
       });
     });

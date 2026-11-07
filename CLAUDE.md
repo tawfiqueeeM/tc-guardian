@@ -55,7 +55,12 @@ All communication between the content script (`content.js`) and background servi
       present: boolean,
       summary: string,
       shortSummary: string,
-      snippet: string
+      snippet: string,
+      cancellationGuide?: {
+        domain: string,
+        url: string | null,
+        steps: string[]
+      }
     },
     NO_DELETE: {
       present: boolean,

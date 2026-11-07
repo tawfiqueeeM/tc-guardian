@@ -25,7 +25,8 @@ function createEmptyData() {
       present: false,
       summary: 'No automatic renewal or non-refundable billing terms detected.',
       shortSummary: 'No auto-renewal clauses detected.',
-      snippet: ''
+      snippet: '',
+      cancellationGuide: null
     },
     NO_DELETE: {
       present: false,
@@ -90,6 +91,155 @@ function formatShortSummary(summary, categoryKey, isPresent = true) {
     return truncated.slice(0, lastSpace).trim() + '...';
   }
   return truncated.trim() + '...';
+}
+
+/**
+ * Structured Subscription Cancellation Guides Database
+ * Maps popular subscription domains to step-by-step instructions and billing URLs.
+ */
+const CANCELLATION_GUIDES = {
+  'netflix.com': {
+    domain: 'netflix.com',
+    url: 'https://www.netflix.com/youraccount',
+    steps: [
+      'Go to your Netflix Account page (netflix.com/youraccount)',
+      'Under the "Membership & Billing" section, click "Cancel Membership"',
+      'Select "Finish Cancellation" to confirm and stop recurring billing'
+    ]
+  },
+  'spotify.com': {
+    domain: 'spotify.com',
+    url: 'https://www.spotify.com/account/overview/',
+    steps: [
+      'Log into your Spotify Account Overview page',
+      'Scroll down to "Your plan" and click "Change plan"',
+      'Scroll to "Cancel Spotify" and click "Cancel Premium"'
+    ]
+  },
+  'adobe.com': {
+    domain: 'adobe.com',
+    url: 'https://account.adobe.com/plans',
+    steps: [
+      'Sign in to account.adobe.com/plans',
+      'Select "Manage plan" for the active subscription',
+      'Select "Cancel your plan" and follow prompts to confirm cancellation'
+    ]
+  },
+  'amazon.com': {
+    domain: 'amazon.com',
+    url: 'https://www.amazon.com/mc/manage',
+    steps: [
+      'Go to Amazon Account -> "Your Memberships & Subscriptions"',
+      'Select "Manage Subscription" next to the active service',
+      'Click "End Subscription" and follow the confirmation prompts'
+    ]
+  },
+  'quora.com': {
+    domain: 'quora.com',
+    url: 'https://www.quora.com/settings/subscription',
+    steps: [
+      'Go to your Quora profile -> "Settings"',
+      'Navigate to "Subscriptions"',
+      'Click "Cancel Subscription" on Quora+'
+    ]
+  },
+  'reddit.com': {
+    domain: 'reddit.com',
+    url: 'https://www.reddit.com/settings/premium',
+    steps: [
+      'Go to Reddit User Settings -> "Subscriptions"',
+      'Find Reddit Premium and click "Manage Subscription"',
+      'Click "Cancel" to turn off recurring auto-renewal'
+    ]
+  },
+  'apple.com': {
+    domain: 'apple.com',
+    url: 'https://support.apple.com/billing',
+    steps: [
+      'Open Settings or App Store on your device -> tap your Apple ID',
+      'Tap "Subscriptions"',
+      'Tap the active subscription and select "Cancel Subscription"'
+    ]
+  },
+  'google.com': {
+    domain: 'google.com',
+    url: 'https://play.google.com/store/account/subscriptions',
+    steps: [
+      'Go to Google Play Subscriptions (play.google.com/store/account/subscriptions)',
+      'Select the subscription you want to cancel',
+      'Click "Manage" -> "Cancel subscription"'
+    ]
+  },
+  'hulu.com': {
+    domain: 'hulu.com',
+    url: 'https://secure.hulu.com/account',
+    steps: [
+      'Log into your Hulu Account page',
+      'Under the "Your Subscription" section, select "Cancel"',
+      'Follow the on-screen options to finalize cancellation'
+    ]
+  },
+  'disneyplus.com': {
+    domain: 'disneyplus.com',
+    url: 'https://www.disneyplus.com/account',
+    steps: [
+      'Log into your Disney+ Account overview',
+      'Select your subscription under the "Subscription" heading',
+      'Select "Cancel Subscription" and choose your reason'
+    ]
+  },
+  'youtube.com': {
+    domain: 'youtube.com',
+    url: 'https://www.youtube.com/paid_memberships',
+    steps: [
+      'Go to youtube.com/paid_memberships',
+      'Click "Manage Membership" next to YouTube Premium',
+      'Click "Deactivate" or "Cancel"'
+    ]
+  },
+  'dropbox.com': {
+    domain: 'dropbox.com',
+    url: 'https://www.dropbox.com/account/plan',
+    steps: [
+      'Go to Dropbox Account -> "Plan"',
+      'Select "Cancel plan" at the bottom of the page',
+      'Choose a cancellation reason and confirm'
+    ]
+  },
+  'microsoft.com': {
+    domain: 'microsoft.com',
+    url: 'https://account.microsoft.com/services',
+    steps: [
+      'Sign in to account.microsoft.com/services',
+      'Find the subscription and select "Manage"',
+      'Select "Cancel subscription" or "Turn off recurring billing"'
+    ]
+  },
+  'default': {
+    domain: 'default',
+    url: null,
+    steps: [
+      'Locate your Profile or Avatar icon in the top navigation bar',
+      'Go to "Account Settings", "Billing", or "Subscriptions"',
+      'Look for "Manage Plan", "Auto-Renew", or "Payment Methods"',
+      'Select "Cancel Subscription" or toggle off "Auto-Renew" before your next billing cycle'
+    ]
+  }
+};
+
+function getCancellationGuide(domain = '') {
+  const cleanDomain = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+  for (const [key, guide] of Object.entries(CANCELLATION_GUIDES)) {
+    if (key !== 'default' && (cleanDomain === key || cleanDomain.endsWith('.' + key))) {
+      return { ...guide };
+    }
+  }
+  const defaultGuide = CANCELLATION_GUIDES['default'];
+  return {
+    domain: cleanDomain || 'Current Site',
+    url: cleanDomain ? `https://${cleanDomain}` : null,
+    steps: defaultGuide.steps
+  };
 }
 
 /**
@@ -371,6 +521,9 @@ function generateGuaranteedFallback(engineLabel = 'Fallback Detection', sourceTe
         shortSummary: shortSummary,
         snippet: snippet
       };
+      if (k === 'AUTO_RENEW') {
+        data[k].cancellationGuide = getCancellationGuide(domain);
+      }
     } else {
       const docNote = isDoc ? ' (Open-source / educational site)' : '';
       data[k] = {
@@ -379,7 +532,14 @@ function generateGuaranteedFallback(engineLabel = 'Fallback Detection', sourceTe
         shortSummary: 'No risk clause detected.',
         snippet: ''
       };
+      if (k === 'AUTO_RENEW') {
+        data[k].cancellationGuide = null;
+      }
     }
+  }
+
+  if (data.AUTO_RENEW?.present && data.AUTO_RENEW.cancellationGuide) {
+    data.cancellationGuide = data.AUTO_RENEW.cancellationGuide;
   }
 
   return {
@@ -840,6 +1000,9 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
           shortSummary: shortSummary,
           snippet: finalSnippet
         };
+        if (k === 'AUTO_RENEW') {
+          base[k].cancellationGuide = raw[k]?.cancellationGuide || getCancellationGuide(domain);
+        }
       } else {
         const docNote = isDoc ? ' (Open-source / educational site)' : '';
         base[k] = {
@@ -848,6 +1011,9 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
           shortSummary: 'No risk clause detected.',
           snippet: ''
         };
+        if (k === 'AUTO_RENEW') {
+          base[k].cancellationGuide = null;
+        }
       }
     } else {
       // Key omitted by LLM -> Clean / not present
@@ -857,7 +1023,14 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
         shortSummary: 'No risk clause detected.',
         snippet: ''
       };
+      if (k === 'AUTO_RENEW') {
+        base[k].cancellationGuide = null;
+      }
     }
+  }
+
+  if (base.AUTO_RENEW?.present && base.AUTO_RENEW.cancellationGuide) {
+    base.cancellationGuide = base.AUTO_RENEW.cancellationGuide;
   }
 
   return base;
