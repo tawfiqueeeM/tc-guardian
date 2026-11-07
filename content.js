@@ -28,27 +28,32 @@
 
   const CATEGORY_META = {
     DATA_SALE: {
-      name: 'Data Sale & Third-Party Brokers',
+      name: 'Data Sale & Third-Party Sharing',
+      question: 'Do you want to allow Data Sale / Third-Party Sharing?',
       icon: '📊',
       defaultSummary: 'Sells or shares your personal identity, browsing telemetry, and behavior with third-party ad brokers and marketing syndicates.'
     },
     AI_TRAINING: {
-      name: 'AI Model Training on User Data',
+      name: 'AI Model Training',
+      question: 'Do you want to allow AI Model Training on Your Data?',
       icon: '🤖',
       defaultSummary: 'Uses your uploaded content, documents, prompts, and assets to train generative AI and machine learning models without opt-out.'
     },
     AUTO_RENEW: {
-      name: 'Auto-Renewal & No-Refund Policy',
+      name: 'Auto-Renewal & Recurring Billing',
+      question: 'Do you accept Auto-Renewal / Non-Refundable Billing?',
       icon: '💳',
       defaultSummary: 'Automatically renews subscriptions with recurring billing and enforces strict non-refundable terms upon renewal.'
     },
     NO_DELETE: {
       name: 'Indefinite Data Retention',
+      question: 'Do you allow Indefinite Retention After Account Deletion?',
       icon: '🗄️',
       defaultSummary: 'Retains your personal records, database logs, and telemetry indefinitely even after you request account deletion.'
     },
     WAIVE_RIGHTS: {
       name: 'Mandatory Arbitration & Class Action Waiver',
+      question: 'Do you agree to Mandatory Arbitration & Rights Waiver?',
       icon: '⚖️',
       defaultSummary: 'Forces dispute resolution via private binding arbitration and strips your legal rights to jury trial or class action participation.'
     }
@@ -555,73 +560,14 @@
         color: #f8fafc;
       }
 
-      /* Subheader Meta Bar */
-      .tc-subbar {
-        padding: 8px 18px;
-        background: rgba(15, 23, 42, 0.7);
-        border-bottom: 1px solid #1e293b;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 11px;
-        color: #94a3b8;
-      }
-
-      .tc-engine-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        color: #38bdf8;
-      }
-
-      .tc-engine-pill::before {
-        content: '';
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #38bdf8;
-      }
-
-      .tc-reset-btn {
-        background: transparent;
-        border: 1px solid #475569;
-        color: #cbd5e1;
-        font-size: 10px;
-        font-weight: 500;
-        padding: 2px 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: all 0.15s ease;
-      }
-
-      .tc-reset-btn:hover {
-        background: #ef4444;
-        border-color: #ef4444;
-        color: #ffffff;
-      }
-
-      /* Alert Banner for Dealbreakers */
-      .tc-dealbreaker-banner {
-        background: rgba(239, 68, 68, 0.15);
-        border-left: 4px solid #ef4444;
-        padding: 10px 18px;
-        font-size: 12px;
-        font-weight: 600;
-        color: #fca5a5;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        animation: pulse-border 2s infinite;
-      }
-
       /* Card List */
       .tc-body {
         padding: 14px 18px;
         overflow-y: auto;
-        max-height: calc(100vh - 220px);
+        max-height: calc(100vh - 160px);
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 14px;
       }
 
       .tc-body::-webkit-scrollbar {
@@ -641,8 +587,8 @@
       .tc-card {
         background: #1e293b;
         border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 14px;
+        border-radius: 12px;
+        padding: 14px 16px;
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
 
@@ -652,124 +598,145 @@
       }
 
       .tc-card-header {
+        margin-bottom: 8px;
+      }
+
+      .tc-card-question {
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #ffffff;
+        line-height: 1.4;
         display: flex;
         align-items: flex-start;
-        justify-content: space-between;
         gap: 8px;
-        margin-bottom: 8px;
       }
 
-      .tc-card-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: #f1f5f9;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      /* Badges */
-      .tc-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 600;
-        line-height: 1.3;
-        margin-bottom: 8px;
-      }
-
-      .tc-badge.dealbreaker {
-        background: #ef4444;
-        color: #ffffff;
-        box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
-      }
-
-      .tc-badge.assumed-yes {
-        background: #059669;
-        color: #ecfdf5;
-      }
-
-      .tc-badge.override-yes {
-        background: #047857;
-        color: #d1fae5;
-        border: 1px solid #10b981;
-      }
-
-      .tc-badge.override-no {
-        background: #b91c1c;
-        color: #fee2e2;
-        border: 1px solid #ef4444;
-      }
-
-      .tc-badge.new-question {
-        background: #d97706;
-        color: #fffbeb;
+      .tc-cat-icon {
+        font-size: 16px;
+        line-height: 1.2;
+        flex-shrink: 0;
       }
 
       .tc-card-summary {
         font-size: 12px;
         color: #cbd5e1;
-        line-height: 1.5;
+        line-height: 1.55;
         margin-bottom: 12px;
+        background: rgba(15, 23, 42, 0.6);
+        padding: 8px 10px;
+        border-radius: 6px;
+        border-left: 3px solid #3b82f6;
       }
 
-      /* Card Actions */
+      /* Stat Line */
+      .tc-card-statline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11px;
+        margin-bottom: 12px;
+        padding: 0 2px;
+      }
+
+      .tc-stat-pill {
+        color: #38bdf8;
+        font-weight: 600;
+        font-size: 12px;
+        background: rgba(56, 189, 248, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        font-family: monospace;
+      }
+
+      .tc-override-pill {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 4px;
+      }
+
+      .tc-override-pill.pill-yes {
+        background: rgba(16, 185, 129, 0.2);
+        color: #86efac;
+        border: 1px solid rgba(16, 185, 129, 0.4);
+      }
+
+      .tc-override-pill.pill-no {
+        background: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+      }
+
+      .tc-dealbreaker-pill {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+      }
+
+      /* Prominent Action Buttons */
       .tc-card-actions {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
       }
 
       .tc-btn {
         flex: 1;
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 600;
+        padding: 9px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 700;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        letter-spacing: 0.5px;
         transition: all 0.15s ease;
-        border: 1px solid transparent;
+        border: 1.5px solid transparent;
       }
 
       .tc-btn-yes {
-        background: #14532d;
+        background: rgba(16, 185, 129, 0.15);
         color: #86efac;
-        border-color: #166534;
+        border-color: #059669;
       }
 
       .tc-btn-yes:hover {
-        background: #16a34a;
+        background: #059669;
         color: #ffffff;
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
       }
 
       .tc-btn-yes.active {
-        background: #15803d;
+        background: #059669;
         color: #ffffff;
-        border-color: #22c55e;
-        box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+        border-color: #34d399;
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
       }
 
       .tc-btn-no {
-        background: #7f1d1d;
+        background: rgba(239, 68, 68, 0.15);
         color: #fca5a5;
-        border-color: #991b1b;
+        border-color: #dc2626;
       }
 
       .tc-btn-no:hover {
         background: #dc2626;
         color: #ffffff;
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
       }
 
       .tc-btn-no.active {
-        background: #b91c1c;
+        background: #dc2626;
         color: #ffffff;
-        border-color: #ef4444;
-        box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+        border-color: #f87171;
+        box-shadow: 0 0 12px rgba(239, 68, 68, 0.5);
       }
 
       /* Empty State */
@@ -806,8 +773,10 @@
       let dealbreakerCount = 0;
       CATEGORIES.forEach((catKey) => {
         if (analysis.categories[catKey] && analysis.categories[catKey].present) {
-          const st = calculateStatus(catKey, currentDomain, profile, overrides);
-          if (st.code === 'DEALBREAKER') dealbreakerCount++;
+          const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
+          const no = Number(catStats.no) || 0;
+          const total = Number(catStats.yes || 0) + no;
+          if (total > 0 && no >= 2 && (no / total) >= 0.60) dealbreakerCount++;
         }
       });
 
@@ -815,7 +784,7 @@
         <style>${getCSS()}</style>
         <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
           <span>🛡️</span>
-          <span>TC Guardian</span>
+          <span>T&C Guardian</span>
           ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
         </button>
       `;
@@ -832,34 +801,62 @@
       (catKey) => analysis.categories[catKey] && analysis.categories[catKey].present
     );
 
-    let hasDealbreaker = false;
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+
+    let dealbreakerCount = 0;
     const categoryCardsHtml = presentCategories.map((catKey) => {
       const meta = CATEGORY_META[catKey];
       const data = analysis.categories[catKey];
-      const status = calculateStatus(catKey, currentDomain, profile, overrides);
 
-      if (status.code === 'DEALBREAKER') {
-        hasDealbreaker = true;
+      const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
+      const yes = Number(catStats.yes) || 0;
+      const no = Number(catStats.no) || 0;
+      const total = yes + no;
+
+      // Stat Line: e.g. "Stat: 12.3% Yes"
+      let statText = 'Stat: No history yet';
+      if (total > 0) {
+        const pctYes = ((yes / total) * 100).toFixed(1);
+        statText = `Stat: ${pctYes}% Yes`;
       }
 
-      const isCurrentYes = status.overrideValue === true;
-      const isCurrentNo = status.overrideValue === false;
+      // Check current site override
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, catKey);
+      const isCurrentYes = hasOverride && domainOverrides[catKey] === true;
+      const isCurrentNo = hasOverride && domainOverrides[catKey] === false;
+
+      let overrideBadgeHtml = '';
+      if (hasOverride) {
+        overrideBadgeHtml = `<span class="tc-override-pill ${isCurrentYes ? 'pill-yes' : 'pill-no'}">${isCurrentYes ? '✓ Chosen: YES' : '✕ Chosen: NO'}</span>`;
+      } else if (total > 0 && no >= 2 && (no / total) >= 0.60) {
+        overrideBadgeHtml = `<span class="tc-dealbreaker-pill">⚠️ Normally Rejected</span>`;
+        dealbreakerCount++;
+      }
+
+      const isDealbreaker = !hasOverride && total > 0 && no >= 2 && (no / total) >= 0.60;
 
       return `
-        <div class="tc-card ${status.code === 'DEALBREAKER' ? 'tc-card-dealbreaker' : ''}">
+        <div class="tc-card ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
           <div class="tc-card-header">
-            <span class="tc-card-title">${meta.icon} ${meta.name}</span>
+            <div class="tc-card-question">
+              <span class="tc-cat-icon">${meta.icon}</span>
+              <span>${escapeHtml(meta.question || meta.name)}</span>
+            </div>
           </div>
-          <div>
-            <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
-          </div>
+
           <div class="tc-card-summary">${escapeHtml(data.summary)}</div>
+
+          <div class="tc-card-statline">
+            <span class="tc-stat-pill">${escapeHtml(statText)}</span>
+            ${overrideBadgeHtml}
+          </div>
+
           <div class="tc-card-actions">
-            <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes">
-              ${isCurrentYes ? '✓ ' : ''}Accept (Yes)
+            <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
+              ${isCurrentYes ? '✓ ' : ''}[ Yes ]
             </button>
-            <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no">
-              ${isCurrentNo ? '✕ ' : ''}Unacceptable (No)
+            <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no" title="Reject this clause">
+              ${isCurrentNo ? '✕ ' : ''}[ No ]
             </button>
           </div>
         </div>
@@ -880,31 +877,14 @@
         <!-- Header -->
         <div class="tc-header">
           <div class="tc-header-title-row">
-            <span class="tc-logo-badge">TCG</span>
-            <div class="tc-title">
-              <span>TC Guardian</span>
-              <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
-            </div>
+            <span class="tc-logo-badge">🛡️ T&C Guardian</span>
+            <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
           </div>
           <div class="tc-header-actions">
             <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
             <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
           </div>
         </div>
-
-        <!-- Subheader Meta -->
-        <div class="tc-subbar">
-          <span class="tc-engine-pill">${escapeHtml(analysis.engine)}</span>
-          <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
-        </div>
-
-        <!-- Dealbreaker Alert Banner -->
-        ${hasDealbreaker ? `
-          <div class="tc-dealbreaker-banner">
-            <span>🚨</span>
-            <span>Caution: Agreement contains terms you routinely reject!</span>
-          </div>
-        ` : ''}
 
         <!-- Cards List -->
         <div class="tc-body">
@@ -913,8 +893,8 @@
 
         <!-- Footer -->
         <div class="tc-footer">
-          <span>Preferences learn automatically as you answer.</span>
-          <span>${presentCategories.length} clause${presentCategories.length === 1 ? '' : 's'} flagged</span>
+          <span>${presentCategories.length} active question${presentCategories.length === 1 ? '' : 's'}</span>
+          <span style="color: #38bdf8;">Choices save instantly</span>
         </div>
       </div>
     `;
@@ -928,15 +908,6 @@
     root.getElementById('tc-close-btn').addEventListener('click', () => {
       isMinimized = true;
       renderUI(analysis, profile, overrides);
-    });
-
-    root.getElementById('tc-reset-btn').addEventListener('click', async () => {
-      if (confirm('Reset all learned preference history and site overrides?')) {
-        const freshProfile = getDefaultProfile();
-        const freshOverrides = {};
-        await saveStorageData(freshProfile, freshOverrides);
-        renderUI(analysis, freshProfile, freshOverrides);
-      }
     });
 
     // Accept / Reject Buttons
