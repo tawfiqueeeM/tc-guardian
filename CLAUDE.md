@@ -10,7 +10,7 @@ To prevent Git merge conflicts and race conditions, each developer strictly owns
 
 | Developer | Owned Files | Description |
 | :--- | :--- | :--- |
-| **Developer A** | `manifest.json`<br>`background.js`<br>`config.example.js`<br>`config.js`<br>`.gitignore`<br>`CLAUDE.md` | Background service worker, API integrations (ToS;DR, Opera/Chromium AI, Gemini Flash), project configurations, and manifest definition. |
+| **Developer A** | `manifest.json`<br>`background.js`<br>`popup.html`<br>`popup.js`<br>`config.example.js`<br>`config.js`<br>`.gitignore`<br>`CLAUDE.md` | Background service worker, popup dashboard, API integrations (ToS;DR, Opera/Chromium AI, Gemini Flash), project configurations, and manifest definition. |
 | **Developer B** | `content.js`<br>`test-signup.html`<br>`dummy-terms.html` | Page detection, background link pre-fetching, Shadow DOM floating UI overlay, user preference learning & storage. |
 
 > **CRITICAL RULE**: Neither developer may edit, delete, or commit files owned by the other developer under any circumstances.

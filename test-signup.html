@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Your OmniCloud Account | OmniCloud Technologies</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --input-bg: #1f2937;
+      --input-border: #374151;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+    }
+
+    .wrapper {
+      width: 100%;
+      max-width: 480px;
+    }
+
+    .brand {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .logo-mark {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 12px;
+      box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+    }
+
+    .brand h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #ffffff;
+    }
+
+    .brand p {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .signup-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 36px 32px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 6px;
+      color: #e5e7eb;
+    }
+
+    input[type="text"],
+    input[type="email"],
+    input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+      color: #ffffff;
+      font-size: 14px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input[type="text"]:focus,
+    input[type="email"]:focus,
+    input[type="password"]:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 24px;
+      margin-bottom: 24px;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      margin-top: 3px;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .checkbox-label {
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    .checkbox-label a {
+      color: var(--primary);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      font-weight: 500;
+    }
+
+    .checkbox-label a:hover {
+      color: #60a5fa;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 12px;
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-submit:hover {
+      background: var(--primary-hover);
+    }
+
+    /* Testing Playground Panel */
+    .tester-panel {
+      margin-top: 32px;
+      background: rgba(31, 41, 55, 0.5);
+      border: 1px dashed #374151;
+      border-radius: 12px;
+      padding: 20px;
+      font-size: 13px;
+    }
+
+    .tester-panel h3 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #9ca3af;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tester-desc {
+      color: #94a3b8;
+      font-size: 12px;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+
+    .tester-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn-test {
+      background: #1f2937;
+      border: 1px solid #4b5563;
+      color: #e5e7eb;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-test:hover {
+      background: #374151;
+      color: #ffffff;
+      border-color: #6b7280;
+    }
+
+    .btn-test-danger {
+      border-color: #ef4444;
+      color: #fca5a5;
+    }
+
+    .btn-test-danger:hover {
+      background: #ef4444;
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="brand">
+      <div class="logo-mark">⚡</div>
+      <h1>Create your OmniCloud Account</h1>
+      <p>Start your 14-day high-performance cloud trial.</p>
+    </div>
+
+    <div class="signup-card">
+      <form onsubmit="event.preventDefault(); alert('Registration submitted!');">
+        <div class="form-group">
+          <label for="fullName">Full Name</label>
+          <input type="text" id="fullName" placeholder="Sarah Jenkins" required>
+        </div>
+
+        <div class="form-group">
+          <label for="workEmail">Work Email</label>
+          <input type="email" id="workEmail" placeholder="sarah@acme-corp.com" required>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" placeholder="••••••••••••" required>
+        </div>
+
+        <div class="form-group">
+          <label for="orgName">Organization Name</label>
+          <input type="text" id="orgName" placeholder="Acme Corporation">
+        </div>
+
+        <!-- Target Link for TC Guardian Pre-fetching -->
+        <div class="checkbox-group">
+          <input type="checkbox" id="termsAgree" required>
+          <label for="termsAgree" class="checkbox-label">
+            I certify that I have read and agree to the
+            <a href="dummy-terms.html" id="terms-link" target="_blank">Terms and Conditions</a>
+            and Privacy Policy.
+          </label>
+        </div>
+
+        <button type="submit" class="btn-submit">Complete Registration</button>
+      </form>
+    </div>
+
+    <!-- Testing controls for Developer B / evaluation -->
+    <div class="tester-panel">
+      <h3>🧪 TC-Guardian Developer B Test Suite</h3>
+      <p class="tester-desc">
+        <code>content.js</code> automatically pre-fetches the terms link above in the background, extracts text, filters high-risk clauses, and loads the floating Shadow DOM overlay. Use these quick actions to simulate user preference learning:
+      </p>
+      <div class="tester-actions">
+        <button class="btn-test" onclick="simulateProfile('DATA_SALE', 3, 0)">
+          + Simulate 3x YES (Data Sale &rarr; ASSUMED_YES)
+        </button>
+        <button class="btn-test btn-test-danger" onclick="simulateProfile('AI_TRAINING', 0, 2)">
+          ⚠️ Simulate 2x NO (AI Training &rarr; DEALBREAKER)
+        </button>
+        <button class="btn-test" onclick="clearAllData()">
+          ↺ Reset Storage
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function simulateProfile(category, addYes, addNo) {
+      const STORAGE_KEY = 'tc_guardian_userProfile';
+      let profile = {};
+      try {
+        profile = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+      } catch (e) {}
+
+      if (!profile[category]) profile[category] = { yes: 0, no: 0 };
+      profile[category].yes = (profile[category].yes || 0) + addYes;
+      profile[category].no = (profile[category].no || 0) + addNo;
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ [STORAGE_KEY]: profile }, () => window.location.reload());
+      } else {
+        window.location.reload();
+      }
+    }
+
+    function clearAllData() {
+      localStorage.removeItem('tc_guardian_userProfile');
+      localStorage.removeItem('tc_guardian_siteOverrides');
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.clear(() => window.location.reload());
+      } else {
+        window.location.reload();
+      }
+    }
+  </script>
+
+  <!-- Load content script directly so this page can be tested standalone in any browser -->
+  <script src="content.js"></script>
+</body>
+</html>
+
