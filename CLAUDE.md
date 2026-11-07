@@ -37,27 +37,32 @@ All communication between the content script (`content.js`) and background servi
 ```typescript
 {
   success: boolean,
-  engine: "ToS;DR" | "Opera Web AI" | "Gemini Flash",
+  engine: "ToS;DR" | "Opera Web AI" | "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter",
   data: {
     DATA_SALE: {
       present: boolean,
-      summary: string
+      summary: string,
+      snippet: string  // Short quote or keyword phrase from the source text for in-page highlighting
     },
     AI_TRAINING: {
       present: boolean,
-      summary: string
+      summary: string,
+      snippet: string
     },
     AUTO_RENEW: {
       present: boolean,
-      summary: string
+      summary: string,
+      snippet: string
     },
     NO_DELETE: {
       present: boolean,
-      summary: string
+      summary: string,
+      snippet: string
     },
     WAIVE_RIGHTS: {
       present: boolean,
-      summary: string
+      summary: string,
+      snippet: string
     }
   }
 }
@@ -95,9 +100,9 @@ When `background.js` receives `ANALYZE_TC`:
 3. **Tier 3 — Cloud Fallback (`Gemini Flash` / `Groq` / `Cerebras` / `OpenRouter`)**:
    - Calls configured Cloud LLM provider (Google Gemini Flash, Groq, Cerebras, or OpenRouter) with strict JSON response formatting.
    - Returns `engine: "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter"`.
-4. **10-Second Guaranteed Fallback**:
+4. **10-Second Guaranteed Fallback & Dynamic Detection**:
    - If AI or ToS;DR APIs fail, throw an error, or time out after 10 seconds, `background.js` never fails silently.
-   - It returns a fallback payload where all 5 categories (`DATA_SALE`, `AI_TRAINING`, `AUTO_RENEW`, `NO_DELETE`, `WAIVE_RIGHTS`) are set to `{ present: true, summary: "Fallback detection: Clause detected requiring explicit user choice." }` to ensure the UI options always render for testing.
+   - It dynamically evaluates `sourceText` via heuristic keyword matchers: categories where a risk clause is genuinely detected are returned with `present: true` and extracted snippets, while clean or absent categories are set to `present: false`. This ensures the UI question count is truly variable per website rather than static.
 
 ---
 
