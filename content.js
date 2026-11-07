@@ -517,6 +517,8 @@
       if (catData) {
         normalized[catKey] = {
           present: isActiveFlag(catData.present),
+          question: typeof catData.question === 'string' ? catData.question.trim() : '',
+          snippet: String(catData.snippet || catData.quote || '').trim(),
           summary: catData.summary || CATEGORY_META[catKey].defaultSummary
         };
       } else {
@@ -932,6 +934,30 @@
         margin-bottom: 8px;
       }
 
+      .tc-question {
+        font-size: 13px;
+        font-weight: 600;
+        color: #f8fafc;
+        line-height: 1.45;
+        margin-bottom: 8px;
+      }
+
+      .tc-quote {
+        font-size: 11px;
+        color: #94a3b8;
+        font-style: italic;
+        border-left: 2px solid #475569;
+        padding-left: 8px;
+        margin-bottom: 12px;
+      }
+
+      mark {
+        background: rgba(250, 204, 21, 0.25);
+        color: #fde68a;
+        padding: 0 2px;
+        border-radius: 3px;
+      }
+
       .tc-risk-tag {
         font-size: 10px;
         font-weight: 700;
@@ -977,6 +1003,50 @@
         font-size: 11px;
         color: #64748b;
       }
+    `;
+  }
+
+  /**
+   * Dynamic, site-specific question content (no hardcoded per-category questions)
+   */
+  function firstSentence(text) {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    const m = clean.match(/^.+?[.!?](?=\s|$)/);
+    const sentence = (m ? m[0] : clean).replace(/[.!?]+$/, '');
+    return sentence.length > 180 ? sentence.slice(0, 177) + '...' : sentence;
+  }
+
+  // Wrap amounts, durations and percentages in <mark>. Input must already be HTML-escaped.
+  function highlightKeyTerms(escaped) {
+    return escaped.replace(
+      /(\$\s?\d[\d,.]*(?:\/\w+)?|\b\d+[- ]?(?:day|days|month|months|year|years|hour|hours)\b|\b\d+%)/gi,
+      '<mark>$1</mark>'
+    );
+  }
+
+  function getClauseQuote(cat, data) {
+    let quote = data.snippet || '';
+    if (!quote) {
+      const ref = clauseRefs[cat];
+      if (ref && ref.el) quote = (ref.el.textContent || '');
+      else if (ref && ref.snippet) quote = ref.snippet;
+    }
+    quote = quote.replace(/\s+/g, ' ').trim();
+    return quote.length > 240 ? quote.slice(0, 237) + '...' : quote;
+  }
+
+  function buildQuestionHtml(cat, data) {
+    const headline = data.question || `Do you accept this on ${currentDomain}: "${firstSentence(data.summary)}"?`;
+    const summary = String(data.summary || '').trim();
+    const showDetail = !data.question
+      ? summary.replace(/\s+/g, ' ').length > firstSentence(summary).length + 1
+      : summary.length > 0;
+    const quote = getClauseQuote(cat, data);
+
+    return `
+      <div class="tc-question">${highlightKeyTerms(escapeHtml(headline))}</div>
+      ${showDetail ? `<div class="tc-card-summary">${highlightKeyTerms(escapeHtml(summary))}</div>` : ''}
+      ${quote ? `<div class="tc-quote">From the terms: &ldquo;${escapeHtml(quote)}&rdquo;</div>` : ''}
     `;
   }
 
@@ -1053,7 +1123,7 @@
           <div>
             <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
           </div>
-          <div class="tc-card-summary">${escapeHtml(data.summary)}</div>
+          ${buildQuestionHtml(catKey, data)}
           <div class="tc-card-actions">
             <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes">
               ${isCurrentYes ? '✓ ' : ''}Accept (Yes)
