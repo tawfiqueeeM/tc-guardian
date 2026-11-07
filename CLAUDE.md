@@ -91,7 +91,16 @@ When `background.js` receives `ANALYZE_TC`:
 2. **Tier 2 — Local Browser AI (`Opera Web AI` / Chromium Prompt API)**:
    - Evaluates `self.ai && self.ai.languageModel` inside the service worker.
    - If available, runs prompt locally on device and returns `engine: "Opera Web AI"`.
-3. **Tier 3 — Cloud Fallback (`Gemini Flash`)**:
-   - Calls Google Gemini 2.5 Flash via REST API with `responseMimeType: "application/json"`.
-   - Returns `engine: "Gemini Flash"`.
+3. **Tier 3 — Cloud Fallback (`Gemini Flash` / `Groq` / `Cerebras` / `OpenRouter`)**:
+   - Calls configured Cloud LLM provider (Google Gemini Flash, Groq, Cerebras, or OpenRouter) with strict JSON response formatting.
+   - Returns `engine: "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter"`.
+
+---
+
+## 5. Explicit-Choice Model & Storage Protocol
+
+T&C Guardian operates under a strict **explicit-choice model**:
+- **No Automated Assumptions**: The background service worker and analysis engines never automate user decisions, auto-accept, or auto-reject terms on behalf of the user.
+- **Explicit Storage**: `siteOverrides` and `userProfile` in `chrome.storage.local` store only explicit user choices made interactively (e.g., via the content script overlay or the popup dashboard).
+- **Historical Statistics**: User interfaces display interaction history and preference percentages (e.g., "Historically Rejected 80% of the time") rather than automated assumption badges.
 

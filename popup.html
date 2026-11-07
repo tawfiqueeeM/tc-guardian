@@ -152,6 +152,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .profile-cat-name {
@@ -166,10 +168,11 @@
     .profile-badge {
       font-size: 10px;
       font-weight: 700;
-      padding: 2px 8px;
+      padding: 3px 8px;
       border-radius: 9999px;
       text-transform: uppercase;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.3px;
+      display: inline-block;
     }
 
     .badge-dealbreaker {
@@ -178,7 +181,7 @@
       border: 1px solid rgba(239, 68, 68, 0.4);
     }
 
-    .badge-assumed-yes {
+    .badge-accepted {
       background: rgba(16, 185, 129, 0.2);
       color: #86efac;
       border: 1px solid rgba(16, 185, 129, 0.4);
@@ -410,11 +413,11 @@
 
   <!-- Main Content -->
   <main>
-    <!-- Global User Profile Learning Summary -->
+    <!-- Global User Profile Interaction History -->
     <section>
       <div class="section-header">
-        <span class="section-title">🧠 Learned Tendencies</span>
-        <span style="font-size: 11px; color: var(--text-muted);">Accepted vs Rejected</span>
+        <span class="section-title">📊 Historical Choices</span>
+        <span style="font-size: 11px; color: var(--text-muted);">Explicit Yes / No History</span>
       </div>
       <div class="profile-grid" id="profileGrid">
         <!-- Rendered by popup.js -->

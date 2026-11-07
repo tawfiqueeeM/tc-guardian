@@ -137,22 +137,24 @@ function renderProfileGrid() {
     const no = stats.no;
     const total = yes + no;
 
+    const yesPct = total > 0 ? Math.round((yes / total) * 100) : 0;
+    const noPct = total > 0 ? (100 - yesPct) : 0;
+
     let badgeClass = 'badge-neutral';
-    let badgeText = 'Unset';
+    let badgeText = 'No votes recorded';
 
-    if (total > 0 && yes >= 3 && (yes / total) >= 0.75) {
-      badgeClass = 'badge-assumed-yes';
-      badgeText = 'Auto-Assumed YES';
-    } else if (total > 0 && no >= 2 && (no / total) >= 0.60) {
-      badgeClass = 'badge-dealbreaker';
-      badgeText = '⚠️ Dealbreaker';
-    } else if (total > 0) {
-      badgeClass = 'badge-neutral';
-      badgeText = `${total} vote${total === 1 ? '' : 's'}`;
+    if (total > 0) {
+      if (noPct >= 60) {
+        badgeClass = 'badge-dealbreaker';
+        badgeText = `Historically Rejected ${noPct}% of the time`;
+      } else if (yesPct >= 60) {
+        badgeClass = 'badge-accepted';
+        badgeText = `Historically Accepted ${yesPct}% of the time`;
+      } else {
+        badgeClass = 'badge-neutral';
+        badgeText = `Split Choice (${yesPct}% Yes / ${noPct}% No)`;
+      }
     }
-
-    const yesPct = total > 0 ? Math.round((yes / total) * 100) : 50;
-    const noPct = total > 0 ? (100 - yesPct) : 50;
 
     return `
       <div class="profile-card">
@@ -166,8 +168,8 @@ function renderProfileGrid() {
             <div class="ratio-no" style="width: ${total > 0 ? noPct : 0}%"></div>
           </div>
           <div class="ratio-stats">
-            <span class="stat-yes">✓ ${yes} Accepted (${total > 0 ? yesPct : 0}%)</span>
-            <span class="stat-no">✕ ${no} Rejected (${total > 0 ? noPct : 0}%)</span>
+            <span class="stat-yes">✓ ${yes} Yes (${total > 0 ? yesPct : 0}%)</span>
+            <span class="stat-no">✕ ${no} No (${total > 0 ? noPct : 0}%)</span>
           </div>
         </div>
       </div>

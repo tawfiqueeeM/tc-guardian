@@ -1,6 +1,6 @@
 /**
  * T&C Guardian - Background Service Worker (Manifest V3)
- * Developer A: Multi-Tier Analysis Engine (ToS;DR -> Opera Web AI -> Gemini Flash)
+ * Developer A: Multi-Tier Analysis Engine (ToS;DR -> Opera Web AI -> Cloud LLM Fallback)
  */
 
 import { CONFIG } from './config.js';
@@ -129,7 +129,6 @@ async function queryTosdr(domain) {
  */
 async function queryBrowserAI(text) {
   try {
-    // Check if Opera Web AI or Chromium Prompt API is available in service worker scope
     const ai = self?.ai || (typeof window !== 'undefined' ? window?.ai : null);
     if (!ai || !ai.languageModel) return null;
 
@@ -179,81 +178,189 @@ ${text.slice(0, 8000)}
 }
 
 /**
- * Tier 3: Cloud Fallback (Gemini Flash)
+ * Prompt Template for Cloud LLM Providers
  */
-async function queryGemini(text) {
-  const apiKey = CONFIG.GEMINI_API_KEY;
-  const model = CONFIG.GEMINI_MODEL || 'gemini-2.5-flash';
-
-  // If API key is placeholder, use heuristic fallback matching the contract
-  if (!apiKey || apiKey === 'PASTE_YOUR_GEMINI_API_KEY_HERE') {
-    console.warn('[T&C Guardian] Gemini API Key not set. Using heuristic analysis fallback.');
-    return generateHeuristicFallback(text, 'Gemini Flash (Heuristic Fallback)');
-  }
-
-  const prompt = `You are an expert legal safety assistant analyzing Terms of Service and Privacy Agreements for red flags.
-Analyze the following text against these 5 specific categories:
+const CLOUD_PROMPT_SYSTEM = `You are an expert legal safety assistant analyzing Terms of Service and Privacy Agreements for red flags.
+Analyze the provided text against these 5 specific categories:
 1. DATA_SALE: Selling, licensing, sharing, or syndicating user data, telemetry, or profile to third-party data brokers or advertisers.
 2. AI_TRAINING: Training artificial intelligence, large language models, or machine learning systems using user uploads, prompts, or content without explicit opt-out.
 3. AUTO_RENEW: Subscriptions automatically renewing (e.g. $99/mo), especially with strict no-refund policies or hard cancellation terms.
 4. NO_DELETE: Indefinite retention of user data even after account closure or deletion requests.
 5. WAIVE_RIGHTS: Mandatory binding individual arbitration and waiver of class action lawsuits or jury trials.
 
-Respond ONLY with a JSON object strictly adhering to this schema:
+Respond ONLY with a valid JSON object strictly adhering to this schema without markdown or formatting:
 {
   "DATA_SALE": { "present": boolean, "summary": "plain English 1-2 sentence explanation" },
   "AI_TRAINING": { "present": boolean, "summary": "plain English 1-2 sentence explanation" },
   "AUTO_RENEW": { "present": boolean, "summary": "plain English 1-2 sentence explanation" },
   "NO_DELETE": { "present": boolean, "summary": "plain English 1-2 sentence explanation" },
   "WAIVE_RIGHTS": { "present": boolean, "summary": "plain English 1-2 sentence explanation" }
+}`;
+
+/**
+ * OpenAI-compatible Cloud Provider (Groq / Cerebras / OpenRouter)
+ */
+async function queryOpenAICompatible(text, endpoint, apiKey, model, engineName) {
+  const promptUser = `Analyze the following terms text for the 5 categories:\n\n${text.slice(0, 10000)}`;
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        { role: 'system', content: CLOUD_PROMPT_SYSTEM },
+        { role: 'user', content: promptUser }
+      ],
+      response_format: { type: 'json_object' }
+    })
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`${engineName} API error ${res.status}: ${errText}`);
+  }
+
+  const json = await res.json();
+  const content = json?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error(`Empty response content from ${engineName}`);
+  }
+
+  const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+  const data = validateAndNormalizeData(parsed);
+
+  return {
+    success: true,
+    engine: engineName,
+    data,
+    categories: data
+  };
 }
 
-Terms Text:
-${text.slice(0, 11000)}`;
+/**
+ * Google Gemini Flash Cloud Provider
+ */
+async function queryGemini(text) {
+  const apiKey = CONFIG.GEMINI_API_KEY;
+  const model = CONFIG.GEMINI_MODEL || 'gemini-2.5-flash';
 
-  try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const payload = {
-      contents: [
-        {
-          parts: [{ text: prompt }]
-        }
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json'
+  const prompt = `${CLOUD_PROMPT_SYSTEM}\n\nTerms Text:\n${text.slice(0, 11000)}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const payload = {
+    contents: [
+      {
+        parts: [{ text: prompt }]
       }
-    };
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Gemini API error ${res.status}: ${errText}`);
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json'
     }
+  };
 
-    const json = await res.json();
-    const candidateText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!candidateText) {
-      throw new Error('No candidate content returned by Gemini');
-    }
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
 
-    const parsed = JSON.parse(candidateText.trim());
-    const data = validateAndNormalizeData(parsed);
-
-    return {
-      success: true,
-      engine: 'Gemini Flash',
-      data,
-      categories: data
-    };
-  } catch (err) {
-    console.warn('[T&C Guardian] Gemini Cloud API call failed:', err.message || err);
-    return generateHeuristicFallback(text, 'Gemini Flash');
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini API error ${res.status}: ${errText}`);
   }
+
+  const json = await res.json();
+  const candidateText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!candidateText) {
+    throw new Error('No candidate content returned by Gemini');
+  }
+
+  const cleaned = candidateText.replace(/```json/g, '').replace(/```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+  const data = validateAndNormalizeData(parsed);
+
+  return {
+    success: true,
+    engine: 'Gemini Flash',
+    data,
+    categories: data
+  };
+}
+
+/**
+ * Tier 3: Cloud Fallback Router (Groq / Cerebras / Gemini / OpenRouter)
+ */
+async function queryCloudFallback(text) {
+  const provider = (CONFIG.CLOUD_PROVIDER || 'gemini').toLowerCase();
+
+  // 1. Groq
+  if (provider === 'groq' || (CONFIG.GROQ_API_KEY && CONFIG.GROQ_API_KEY !== 'PASTE_YOUR_GROQ_API_KEY_HERE')) {
+    try {
+      if (CONFIG.GROQ_API_KEY && CONFIG.GROQ_API_KEY !== 'PASTE_YOUR_GROQ_API_KEY_HERE') {
+        return await queryOpenAICompatible(
+          text,
+          'https://api.groq.com/openai/v1/chat/completions',
+          CONFIG.GROQ_API_KEY,
+          CONFIG.GROQ_MODEL || 'llama-3.3-70b-versatile',
+          'Groq'
+        );
+      }
+    } catch (err) {
+      console.warn('[T&C Guardian] Groq provider call failed:', err.message || err);
+    }
+  }
+
+  // 2. Cerebras
+  if (provider === 'cerebras' || (CONFIG.CEREBRAS_API_KEY && CONFIG.CEREBRAS_API_KEY !== 'PASTE_YOUR_CEREBRAS_API_KEY_HERE')) {
+    try {
+      if (CONFIG.CEREBRAS_API_KEY && CONFIG.CEREBRAS_API_KEY !== 'PASTE_YOUR_CEREBRAS_API_KEY_HERE') {
+        return await queryOpenAICompatible(
+          text,
+          'https://api.cerebras.ai/v1/chat/completions',
+          CONFIG.CEREBRAS_API_KEY,
+          CONFIG.CEREBRAS_MODEL || 'llama3.1-70b',
+          'Cerebras'
+        );
+      }
+    } catch (err) {
+      console.warn('[T&C Guardian] Cerebras provider call failed:', err.message || err);
+    }
+  }
+
+  // 3. OpenRouter
+  if (provider === 'openrouter' || (CONFIG.OPENROUTER_API_KEY && CONFIG.OPENROUTER_API_KEY !== 'PASTE_YOUR_OPENROUTER_API_KEY_HERE')) {
+    try {
+      if (CONFIG.OPENROUTER_API_KEY && CONFIG.OPENROUTER_API_KEY !== 'PASTE_YOUR_OPENROUTER_API_KEY_HERE') {
+        return await queryOpenAICompatible(
+          text,
+          'https://openrouter.ai/api/v1/chat/completions',
+          CONFIG.OPENROUTER_API_KEY,
+          CONFIG.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
+          'OpenRouter'
+        );
+      }
+    } catch (err) {
+      console.warn('[T&C Guardian] OpenRouter provider call failed:', err.message || err);
+    }
+  }
+
+  // 4. Gemini Flash
+  if (CONFIG.GEMINI_API_KEY && CONFIG.GEMINI_API_KEY !== 'PASTE_YOUR_GEMINI_API_KEY_HERE') {
+    try {
+      return await queryGemini(text);
+    } catch (err) {
+      console.warn('[T&C Guardian] Gemini Flash call failed:', err.message || err);
+    }
+  }
+
+  // 5. Standalone Heuristic Fallback if keys are placeholders or network blocked
+  console.info('[T&C Guardian] Using standalone keyword heuristic fallback.');
+  return generateHeuristicFallback(text, 'Gemini Flash');
 }
 
 /**
@@ -344,16 +451,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
-        // Tier 2: Local Browser AI
+        // Tier 2: Local Browser AI (Opera / Chromium)
         const browserAiResult = await queryBrowserAI(text);
         if (browserAiResult) {
           sendResponse(browserAiResult);
           return;
         }
 
-        // Tier 3: Cloud Fallback (Gemini Flash)
-        const geminiResult = await queryGemini(text);
-        sendResponse(geminiResult);
+        // Tier 3: Cloud Fallback (Groq / Cerebras / Gemini / OpenRouter)
+        const cloudResult = await queryCloudFallback(text);
+        sendResponse(cloudResult);
       } catch (err) {
         console.error('[T&C Guardian] Unhandled error during analysis:', err);
         sendResponse(generateHeuristicFallback(text, 'Gemini Flash'));
@@ -363,5 +470,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Return true to keep message channel open for async sendResponse
     return true;
   }
+
+  // Explicit Choice Model: Save explicit user preference without automated assumptions
+  if (request?.action === 'SAVE_EXPLICIT_CHOICE') {
+    const { domain, category, isAccepted } = request;
+    chrome.storage.local.get(['tc_guardian_userProfile', 'tc_guardian_siteOverrides'], (res) => {
+      const profile = res.tc_guardian_userProfile || getDefaultUserProfile();
+      const overrides = res.tc_guardian_siteOverrides || {};
+
+      if (category) {
+        if (!profile[category]) profile[category] = { yes: 0, no: 0 };
+        if (isAccepted) {
+          profile[category].yes += 1;
+        } else {
+          profile[category].no += 1;
+        }
+
+        if (domain) {
+          if (!overrides[domain]) overrides[domain] = {};
+          overrides[domain][category] = Boolean(isAccepted);
+        }
+      }
+
+      chrome.storage.local.set({
+        tc_guardian_userProfile: profile,
+        tc_guardian_siteOverrides: overrides
+      }, () => {
+        sendResponse({ success: true, profile, overrides });
+      });
+    });
+    return true;
+  }
+
+  // Explicit Choice Model: Reset all preferences cleanly
+  if (request?.action === 'RESET_PREFERENCES') {
+    chrome.storage.local.set({
+      tc_guardian_userProfile: getDefaultUserProfile(),
+      tc_guardian_siteOverrides: {}
+    }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
 });
 
+function getDefaultUserProfile() {
+  return {
+    DATA_SALE: { yes: 0, no: 0 },
+    AI_TRAINING: { yes: 0, no: 0 },
+    AUTO_RENEW: { yes: 0, no: 0 },
+    NO_DELETE: { yes: 0, no: 0 },
+    WAIVE_RIGHTS: { yes: 0, no: 0 }
+  };
+}
