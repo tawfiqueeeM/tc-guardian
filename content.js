@@ -766,39 +766,67 @@
   }
 
   function generateLocalMockResponse(text) {
-    // Stricter phrase-level patterns to limit false positives.
-    const hasDataSale = /\b(sell|sold|selling)\b[^.]{0,60}(personal|data|information)|data brokers?|sale of (your )?(personal )?(data|information)/i.test(text);
-    const hasAiTraining = /train(ing)?\b[^.]{0,60}\b(models?|artificial intelligence|machine learning|\bAI\b)|\b(artificial intelligence|machine learning)\b[^.]{0,60}\btrain/i.test(text);
-    const hasAutoRenew = /auto(matic(ally)?)?[- ]?renew|renews? automatically|recurring (billing|subscription|charge)/i.test(text);
-    const hasNoDelete = /(retain|keep|preserve|store)[^.]{0,80}(indefinite(ly)?|after (you )?(delet|terminat|clos))|backups?[^.]{0,60}(indefinite|retain)/i.test(text);
-    const hasWaiveRights = /binding arbitration|class[- ]action (waiver|waive)|waive[^.]{0,60}(jury|class action)/i.test(text);
-
-    const note = ' (Keyword match only; review the original terms to confirm.)';
-    return {
-      success: true,
-      engine: 'Keyword Heuristic (Standalone Fallback)',
-      categories: {
-        DATA_SALE: {
-          present: hasDataSale,
-          summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
-        },
-        AI_TRAINING: {
-          present: hasAiTraining,
-          summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
-        },
-        AUTO_RENEW: {
-          present: hasAutoRenew,
-          summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.'
-        },
-        NO_DELETE: {
-          present: hasNoDelete,
-          summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
-        },
-        WAIVE_RIGHTS: {
-          present: hasWaiveRights,
-          summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
+    // Negation-aware keyword detection to prevent false positives (e.g., "do not sell", "never sell")
+    const checkUnnegated = (pattern) => {
+      let m;
+      const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
+      while ((m = regex.exec(text)) !== null) {
+        const preceding = text.slice(Math.max(0, m.index - 60), m.index);
+        if (!/\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not)\b/i.test(preceding)) {
+          return true;
         }
       }
+      return false;
+    };
+
+    const hasDataSale = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)\b(sell|sold|selling|monetiz\w*)\b[^.]{0,60}(personal|data|information)|data brokers?|(?<!\b(?:no\s+|not\s+))sale of (your )?(personal )?(data|information)/gi);
+    const hasAiTraining = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train(ing)?\b[^.]{0,60}\b(models?|artificial intelligence|machine learning|\bAI\b)|\b(artificial intelligence|machine learning)\b[^.]{0,60}\btrain)/gi);
+    const hasAutoRenew = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)auto(matic(ally)?)?[- ]?renew|renews? automatically|recurring (billing|subscription|charge)/gi);
+    const hasNoDelete = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)(retain|keep|preserve|store)[^.]{0,80}(indefinite(ly)?|after (you )?(delet|terminat|clos))|backups?[^.]{0,60}(indefinite|retain)/gi);
+    const hasWaiveRights = checkUnnegated(/binding arbitration|class[- ]action (waiver|waive)|waive[^.]{0,60}(jury|class action)/gi);
+
+    const currentEngine = 'Keyword Heuristic (Standalone Fallback)';
+    const finalData = {
+      DATA_SALE: {
+        present: hasDataSale,
+        summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
+      },
+      AI_TRAINING: {
+        present: hasAiTraining,
+        summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
+      },
+      AUTO_RENEW: {
+        present: hasAutoRenew,
+        summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.'
+      },
+      NO_DELETE: {
+        present: hasNoDelete,
+        summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
+      },
+      WAIVE_RIGHTS: {
+        present: hasWaiveRights,
+        summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
+      }
+    };
+
+    // Data Pipeline Fix: Immediately sync tab analysis state with background.js
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'STORE_TAB_ANALYSIS',
+          action: 'STORE_TAB_ANALYSIS',
+          url: window.location.href,
+          data: finalData,
+          engine: currentEngine
+        });
+      } catch (e) {}
+    }
+
+    return {
+      success: true,
+      engine: currentEngine,
+      categories: finalData,
+      data: finalData
     };
   }
 
@@ -906,29 +934,6 @@
         backdrop-filter: blur(12px);
         color: #0f172a;
         transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-      }
-
-      /* Risk-Themed Accents on Main Card Container */
-      .tc-widget.risk-high,
-      .tc-widget:has(.tc-reco-danger),
-      .tc-widget:has(.risk-high),
-      .tc-widget:has(.tc-card-dealbreaker) {
-        background-color: #fef2f2 !important;
-        border-left: 5px solid #dc2626 !important;
-      }
-
-      .tc-widget.risk-med,
-      .tc-widget:has(.tc-reco-warn),
-      .tc-widget:has(.risk-med) {
-        background-color: #fffbeb !important;
-        border-left: 5px solid #d97706 !important;
-      }
-
-      .tc-widget.risk-low,
-      .tc-widget:has(.tc-reco-safe),
-      .tc-widget:has(.risk-low) {
-        background-color: #f0fdf4 !important;
-        border-left: 5px solid #16a34a !important;
       }
 
       @keyframes tc-slide-in {
@@ -1083,28 +1088,24 @@
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
 
-      /* Risk-Themed Accents on Individual Cards */
-      .tc-card.tc-card-dealbreaker,
+      /* Risk-Themed Accents on Inner Risk Item Containers */
       .tc-card.risk-high,
-      .tc-card:has(.risk-high),
-      .tc-card:has(.tc-dealbreaker-pill),
-      .tc-reco-danger {
+      .tc-card.tc-card-dealbreaker,
+      .tc-risk-item.risk-high {
         background-color: #fef2f2 !important;
         border-left: 5px solid #dc2626 !important;
         border-color: #fecaca !important;
       }
 
       .tc-card.risk-med,
-      .tc-card:has(.risk-med),
-      .tc-reco-warn {
+      .tc-risk-item.risk-med {
         background-color: #fffbeb !important;
         border-left: 5px solid #d97706 !important;
         border-color: #fde68a !important;
       }
 
       .tc-card.risk-low,
-      .tc-card:has(.risk-low),
-      .tc-reco-safe {
+      .tc-risk-item.risk-low {
         background-color: #f0fdf4 !important;
         border-left: 5px solid #16a34a !important;
         border-color: #bbf7d0 !important;
@@ -1115,10 +1116,17 @@
         align-items: flex-start;
         justify-content: space-between;
         gap: 8px;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
       }
 
-      .tc-card-question,
+      .tc-card-question {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 12px;
+        line-height: 1.4;
+      }
+
       .tc-card-title {
         font-size: 13.5px;
         font-weight: 700;
@@ -1708,18 +1716,14 @@
       const sourceSnippet = (sourceClauses && sourceClauses[catKey]) || data.snippet || data.summary || 'Clause text detected in agreement terms.';
       const cancellationGuide = (catKey === 'AUTO_RENEW') ? (data.cancellationGuide || getDefaultCancellationGuide(currentDomain)) : null;
 
-      const riskBadgeClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
-      const riskBadgeText = meta.riskLevel === 'HIGH' ? 'HIGH RISK' : (meta.riskLevel === 'LOW' ? 'LOW RISK' : 'MEDIUM RISK');
+      const riskClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
 
       return `
-        <div class="tc-card ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
+        <div class="tc-card ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
           <div class="tc-card-header">
             <span class="tc-card-title">${meta.icon} ${meta.name}</span>
           </div>
-          <div>
-            <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
-          </div>
-          <div class="tc-card-summary">${escapeHtml(data.summary)}</div>
+          <div class="tc-card-question">Is this risk okay with you?</div>
           <div class="tc-card-actions">
             <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
               ${isCurrentYes ? '✓ ' : ''}[ Yes ]
@@ -1931,6 +1935,23 @@
 
     // Run analysis via message passing or standalone fallback (updates background toolbar badge silently!)
     analysisData = await requestAnalysis(filtered, currentDomain, remoteUrl);
+
+    // Data Pipeline Fix: Immediately sync tab analysis state with background.js
+    if (analysisData) {
+      const finalData = analysisData.categories || analysisData.data || analysisData;
+      const currentEngine = analysisData.engine || 'Fallback Detection';
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+          chrome.runtime.sendMessage({
+            type: 'STORE_TAB_ANALYSIS',
+            action: 'STORE_TAB_ANALYSIS',
+            url: window.location.href,
+            data: finalData,
+            engine: currentEngine
+          });
+        } catch (e) {}
+      }
+    }
 
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();

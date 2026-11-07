@@ -335,12 +335,12 @@ function isDocumentationOrOpenSource(sourceText, domain = '') {
  */
 const EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS = {
   DATA_SALE: [
-    /(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)/i,
-    /monetiz(?:e|ing)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
-    /sale\s+of\s+personal\s+(?:information|data)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)monetiz(?:e|ing)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
+    /(?<!\b(?:no\s+|prohibit\s+))sale\s+of\s+personal\s+(?:information|data)/i,
     /(?:license|syndicate)\s+personal\s+data\s+to\s+third[- ]party\s+data\s+brokers/i,
     /share\s+(?:your\s+)?personal\s+information\s+with\s+commercial\s+data\s+brokers/i,
-    /(?:sell|rent)\s+your\s+personal\s+information/i
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|rent)\s+your\s+personal\s+information/i
   ],
   WAIVE_RIGHTS: [
     /mandatory\s+(?:binding\s+)?arbitration/i,
@@ -355,28 +355,29 @@ const EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS = {
 /**
  * Standard Category Snippet Matchers for Commercial Platforms:
  * Extracts concise snippets when explicit risk clauses are present in terms.
+ * Employs negative lookbehinds so negation statements are not matched.
  */
 const CATEGORY_SNIPPET_MATCHERS = {
   DATA_SALE: [
-    /(?:sell|share|disclose|license|monetiz|transfer)\s+[^.!?\n]{0,60}(?:personal\s+(?:information|data)|telemetry|user\s+profile)[^.!?\n]{0,60}(?:third[- ]part|advertis|broker|commercial|marketing|partner)/i,
-    /(?:third[- ]party|data\s+broker|advertis)[^.!?\n]{0,60}(?:sell|share|monetiz|license)[^.!?\n]{0,60}(?:personal\s+(?:information|data)|user\s+data)/i,
-    /sale\s+(?:or\s+sharing\s+)?of\s+personal\s+(?:information|data)/i,
-    /(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)/i,
-    /monetiz(?:e|ing)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|share|disclose|license|monetiz|transfer)\s+[^.!?\n]{0,60}(?:personal\s+(?:information|data)|telemetry|user\s+profile)[^.!?\n]{0,60}(?:third[- ]part|advertis|broker|commercial|marketing|partner)/i,
+    /(?:third[- ]party|data\s+broker|advertis)[^.!?\n]{0,60}(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|share|monetiz|license)[^.!?\n]{0,60}(?:personal\s+(?:information|data)|user\s+data)/i,
+    /(?<!\b(?:no\s+|prohibit\s+))sale\s+(?:or\s+sharing\s+)?of\s+personal\s+(?:information|data)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)monetiz(?:e|ing)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
     /commercial\s+data\s+broker\s+licensing/i,
     /sell,\s+license,\s+and\s+syndicate\s+personal\s+data/i
   ],
   AI_TRAINING: [
-    /(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|large\s+language|llm|algorithm|neural)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|user)/i,
-    /(?:train|training|fine-tun(?:e|ing))\s+(?:our\s+|proprietary\s+)?(?:ai|artificial\s+intelligence|machine\s+learning|neural\s+network|large\s+language)\s+models?\s+(?:on|using|with)\s+(?:your|user)/i,
-    /(?:use|utilize|license|ingest)\s+[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|post)[^.!?\n]{0,40}(?:train|training|machine\s+learning|ai\s+model)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|large\s+language|llm|algorithm|neural)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|user)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|fine-tun(?:e|ing))\s+(?:our\s+|proprietary\s+)?(?:ai|artificial\s+intelligence|machine\s+learning|neural\s+network|large\s+language)\s+models?\s+(?:on|using|with)\s+(?:your|user)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:use|utilize|license|ingest)\s+[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|post)[^.!?\n]{0,40}(?:train|training|machine\s+learning|ai\s+model)/i,
     /ai\s+model\s+training\s+license/i,
     /license\s+to\s+train\s+(?:proprietary\s+)?(?:artificial\s+intelligence|machine\s+learning|ai\s+models)/i,
     /train\s+artificial\s+intelligence\s+(?:models\s+and\s+neural\s+networks\s+on\s+user\s+data|systems)/i
   ],
   AUTO_RENEW: [
     /(?:subscription|plan|service|membership)\s+(?:will\s+)?automatically\s+renew/i,
-    /automatic(?:ally)?\s+renew(?:s|al)?/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)automatic(?:ally)?\s+renew(?:s|al)?/i,
     /auto-renew(?:s|al)?/i,
     /recurring\s+(?:billing|charge|subscription|fee|payment)/i,
     /mandatory\s+\$(?:99|\d+)[^.!?\n]*recurring\s+auto-renewal/i,
@@ -385,7 +386,7 @@ const CATEGORY_SNIPPET_MATCHERS = {
     /automatically\s+renew\s+subscription\s+at\s+recurring\s+rate/i
   ],
   NO_DELETE: [
-    /(?:retain|keep|preserve|store|archive)\s+[^.!?\n]{0,50}(?:indefinitely|in\s+perpetuity|permanently|in\s+backups)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)(?:retain|keep|preserve|store|archive)\s+[^.!?\n]{0,50}(?:indefinitely|in\s+perpetuity|permanently|in\s+backups)/i,
     /(?:even\s+)?after\s+(?:you\s+delete|deletion\s+of|termination\s+of)\s+your\s+account[^.!?\n]{0,60}(?:we\s+may\s+)?(?:retain|keep|remain|preserve)/i,
     /(?:content|posts?|submissions?|data)\s+(?:may\s+)?remain\s+[^.!?\n]{0,40}(?:after|even\s+if)\s+(?:you\s+delete|account\s+is\s+deleted)/i,
     /indefinite\s+data\s+retention\s+policy/i,
@@ -417,16 +418,62 @@ const CATEGORY_FALLBACK_PHRASES = {
  * Evaluates terms text against established industry risk phrasing.
  */
 const CATEGORY_RISK_PATTERNS = {
-  DATA_SALE: /(?:sell|share|disclose|license|monetiz)\s+[^.!?\n]{0,50}(?:personal\s+(?:information|data)|user\s+data)[^.!?\n]{0,50}(?:third[- ]part|advertis|broker|marketing)|sale\s+(?:or\s+sharing\s+)?of\s+personal\s+information|monetiz(?:e|ing)\s+(?:your\s+)?data/i,
-  AI_TRAINING: /(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|llm|algorithm)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|user)|(?:use|license)\s+[^.!?\n]{0,30}(?:content|data|upload|prompt)\s+[^.!?\n]{0,30}(?:train|training|ai\s+model)|ai\s+model\s+training/i,
-  AUTO_RENEW: /automatic(?:ally)?\s+renew(?:s|al)?|auto-renew|recurring\s+(?:billing|charge|subscription)|non-refundable\s+(?:subscription|billing|fee)/i,
-  NO_DELETE: /retain\s+[^.!?\n]{0,40}(?:indefinitely|permanently)|(?:after\s+(?:account\s+)?deletion|even\s+if\s+you\s+delete)[^.!?\n]{0,40}(?:retain|remain|preserve)|indefinite\s+data\s+retention/i,
+  DATA_SALE: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|share|disclose|license|monetiz)\s+[^.!?\n]{0,50}(?:personal\s+(?:information|data)|user\s+data)[^.!?\n]{0,50}(?:third[- ]part|advertis|broker|marketing)|(?<!\b(?:no\s+|prohibit\s+))sale\s+(?:or\s+sharing\s+)?of\s+personal\s+information|monetiz(?:e|ing)\s+(?:your\s+)?data/i,
+  AI_TRAINING: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|llm|algorithm)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|user)|(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:use|license)\s+[^.!?\n]{0,30}(?:content|data|upload|prompt)\s+[^.!?\n]{0,30}(?:train|training|ai\s+model)|ai\s+model\s+training/i,
+  AUTO_RENEW: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)automatic(?:ally)?\s+renew(?:s|al)?|auto-renew|recurring\s+(?:billing|charge|subscription)|non-refundable\s+(?:subscription|billing|fee)/i,
+  NO_DELETE: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)(?:retain|keep|preserve|store)\s+[^.!?\n]{0,40}(?:indefinitely|permanently)|(?:after\s+(?:account\s+)?deletion|even\s+if\s+you\s+delete)[^.!?\n]{0,40}(?:retain|remain|preserve)|indefinite\s+data\s+retention/i,
   WAIVE_RIGHTS: /(?:mandatory|binding)\s+arbitration|arbitration\s+agreement|class\s+action\s+waiver|waive\s+[^.!?\n]{0,30}(?:jury\s+trial|class\s+action)/i
 };
 
 /**
+ * Negation Patterns & Exclusion Checker
+ * Explicitly excludes statements containing negations ("do not sell", "don't sell",
+ * "will not sell", "never sell", "does not use") so they are never flagged as threats.
+ */
+const NEGATION_PATTERNS = [
+  /\b(?:do\s+not|don't|does\s+not|doesn't|did\s+not|didn't|will\s+not|won't|never|cannot|can't|shall\s+not|neither|nor)\b/i,
+  /\b(?:no\s+(?:longer|sale|selling|monetization|licensing|sharing|training|retention|waiver))\b/i,
+  /\b(?:prohibit(?:ed|s)?|refrain\s+from|strictly\s+forbidden|not\s+permitted|not\s+authorized)\b/i,
+  /\bnot\s+(?:ever\s+)?(?:sell|sold|share|shared|monetiz\w*|train\w*|use\w*|retain\w*|renew\w*|waiv\w*)\b/i,
+  /\bwithout\s+(?:your\s+)?(?:prior\s+)?(?:express\s+|explicit\s+|written\s+)?consent\b/i
+];
+
+function isClauseNegated(text, matchIndex, matchLength = 0) {
+  if (!text || typeof text !== 'string') return false;
+
+  const textBefore = text.slice(0, matchIndex);
+  const sentenceStart = Math.max(
+    0,
+    textBefore.lastIndexOf('. '),
+    textBefore.lastIndexOf('.\n'),
+    textBefore.lastIndexOf('? '),
+    textBefore.lastIndexOf('! '),
+    textBefore.lastIndexOf('\n\n')
+  );
+
+  const clause = text.slice(sentenceStart === 0 ? 0 : sentenceStart + 2, matchIndex + matchLength + 60);
+  const preceding = text.slice(sentenceStart === 0 ? 0 : sentenceStart + 2, matchIndex);
+
+  for (const negRegex of NEGATION_PATTERNS) {
+    if (negRegex.test(preceding)) {
+      const afterNegation = preceding.replace(negRegex, '');
+      if (!/\b(?:however|nevertheless|nonetheless|but\s+we\s+may|except)\b/i.test(afterNegation)) {
+        return true;
+      }
+    }
+  }
+
+  // Direct phrase negation pattern check
+  if (/\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not)\s+[^.!?\n]{0,60}(?:sell|monetiz|train|retain|renew|waive|use)/i.test(clause)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Checks whether sourceText genuinely contains high-confidence risk clauses for categoryKey.
- * Strictly avoids generic single words while allowing standard detection on commercial platforms.
+ * Strictly avoids generic single words and rejects negated statements (e.g. "do not sell").
  * Automatically enforces a ZERO-RISK DEFAULT for open-source and educational documentation text.
  */
 function hasCategoryRisk(sourceText, categoryKey, domain = '') {
@@ -435,25 +482,47 @@ function hasCategoryRisk(sourceText, categoryKey, domain = '') {
   }
 
   // ZERO-RISK DEFAULT FOR DOCUMENTATION:
-  // If terms text contains open-source or educational disclaimers (e.g., "open-source",
-  // "creative commons", "educational project"), default categories to present: false
-  // unless explicit monetization/arbitration clauses are detected.
   if (isDocumentationOrOpenSource(sourceText, domain)) {
     const explicitPatterns = EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS[categoryKey];
     if (!explicitPatterns) {
       return false;
     }
-    return explicitPatterns.some((regex) => regex.test(sourceText));
+    return explicitPatterns.some((regex) => {
+      let m;
+      const r = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+      while ((m = r.exec(sourceText)) !== null) {
+        if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+          return true;
+        }
+      }
+      return false;
+    });
   }
 
-  // HIGH-CONFIDENCE MATCHING ONLY:
-  // Require explicit high-risk phrases rather than generic words.
+  // HIGH-CONFIDENCE MATCHING ONLY (with negation exclusion):
   const snippetMatchers = CATEGORY_SNIPPET_MATCHERS[categoryKey] || [];
-  if (snippetMatchers.some((regex) => regex.test(sourceText))) {
-    return true;
+  for (const regex of snippetMatchers) {
+    let m;
+    const r = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+    while ((m = r.exec(sourceText)) !== null) {
+      if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+        return true;
+      }
+    }
   }
+
   const generalPattern = CATEGORY_RISK_PATTERNS[categoryKey];
-  return generalPattern ? generalPattern.test(sourceText) : false;
+  if (generalPattern) {
+    let m;
+    const r = new RegExp(generalPattern.source, generalPattern.flags.includes('g') ? generalPattern.flags : generalPattern.flags + 'g');
+    while ((m = r.exec(sourceText)) !== null) {
+      if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function extractCategorySnippet(sourceText, categoryKey) {
@@ -469,14 +538,14 @@ function extractCategorySnippet(sourceText, categoryKey) {
     for (const b of blocks) {
       const clean = b.replace(/\s+/g, ' ').trim();
       if (clean.length >= 25 && regex.test(clean)) {
-        if (clean.length > 200) {
-          const match = regex.exec(clean);
-          if (match) {
-            const start = Math.max(0, match.index - 35);
-            const end = Math.min(clean.length, match.index + match[0].length + 100);
-            return (start > 0 ? '...' : '') + clean.slice(start, end).trim() + (end < clean.length ? '...' : '');
-          }
-          return clean.slice(0, 197).trim() + '...';
+        let m = regex.exec(clean);
+        if (m && isClauseNegated(clean, m.index, m[0].length)) {
+          continue; // Skip negated statement
+        }
+        if (clean.length > 200 && m) {
+          const start = Math.max(0, m.index - 35);
+          const end = Math.min(clean.length, m.index + m[0].length + 100);
+          return (start > 0 ? '...' : '') + clean.slice(start, end).trim() + (end < clean.length ? '...' : '');
         }
         return clean;
       }
@@ -485,12 +554,15 @@ function extractCategorySnippet(sourceText, categoryKey) {
 
   // Next, try broader regex search across the raw source text
   for (const regex of matchers) {
-    const match = regex.exec(sourceText);
-    if (match) {
-      const start = Math.max(0, match.index - 30);
-      const end = Math.min(sourceText.length, match.index + match[0].length + 90);
-      const sub = sourceText.slice(start, end).replace(/\s+/g, ' ').trim();
-      return (start > 0 ? '...' : '') + sub + (end < sourceText.length ? '...' : '');
+    let m;
+    const r = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+    while ((m = r.exec(sourceText)) !== null) {
+      if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+        const start = Math.max(0, m.index - 30);
+        const end = Math.min(sourceText.length, m.index + m[0].length + 90);
+        const sub = sourceText.slice(start, end).replace(/\s+/g, ' ').trim();
+        return (start > 0 ? '...' : '') + sub + (end < sourceText.length ? '...' : '');
+      }
     }
   }
 
@@ -1037,40 +1109,44 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
 }
 
 /**
- * Execute 3-Tier Analysis Pipeline
+ * Execute Analysis Pipeline with Primary LLM Priority
+ * Attempts the primary LLM (Cloud AI) API calls first, and only routes to
+ * Fallback Detection if the LLMs fail, timeout, or hit rate limits.
  */
 async function executeAnalysisPipeline(text, domain) {
-  // Tier 1: ToS;DR Fast Lookup
+  // Tier 1: Primary Cloud LLM (Cerebras -> Groq -> OpenRouter -> Gemini)
+  // Ensure the pipeline properly attempts the primary LLM (Cloud AI) API calls first
+  try {
+    const cloudResult = await queryCloudFallback(text, domain);
+    // If an actual Cloud LLM succeeded (not the internal fallback), return immediately
+    if (cloudResult?.success && cloudResult?.data && !/fallback/i.test(cloudResult.engine)) {
+      return cloudResult;
+    }
+  } catch (err) {
+    console.info('[T&C Guardian] Primary Cloud LLM failed:', err.message || err);
+  }
+
+  // Tier 2: ToS;DR Fast Database Lookup
   try {
     const tosdrResult = await queryTosdr(domain, text);
     if (tosdrResult?.success && tosdrResult?.data) {
       return tosdrResult;
     }
   } catch (err) {
-    console.info('[T&C Guardian] Tier 1 ToS;DR failed:', err.message || err);
+    console.info('[T&C Guardian] Tier 2 ToS;DR failed:', err.message || err);
   }
 
-  // Tier 2: Local Browser AI
+  // Tier 3: Local Browser AI (if available)
   try {
     const browserAiResult = await queryBrowserAI(text, domain);
     if (browserAiResult?.success && browserAiResult?.data) {
       return browserAiResult;
     }
   } catch (err) {
-    console.info('[T&C Guardian] Tier 2 Browser AI failed:', err.message || err);
+    console.info('[T&C Guardian] Tier 3 Browser AI failed:', err.message || err);
   }
 
-  // Tier 3: Cloud Fallback
-  try {
-    const cloudResult = await queryCloudFallback(text, domain);
-    if (cloudResult?.success && cloudResult?.data) {
-      return cloudResult;
-    }
-  } catch (err) {
-    console.info('[T&C Guardian] Tier 3 Cloud Fallback failed:', err.message || err);
-  }
-
-  // If all tiers fail or return empty, return guaranteed fallback
+  // Tier 4: Fallback Detection (only reached if LLMs fail, timeout, or hit rate limits)
   return generateGuaranteedFallback('Fallback Detection', text, domain);
 }
 
@@ -1355,17 +1431,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false;
   }
 
-  // Store/update tab analysis directly from an on-demand popup scan
-  if (request?.action === 'STORE_TAB_ANALYSIS') {
-    const { tabId, url, domain, result } = request;
-    if (tabId && result?.data) {
-      const riskInfo = computeOverallRisk(result.data);
+  // Store/update tab analysis directly from an on-demand popup scan or content script fallback
+  if (request?.action === 'STORE_TAB_ANALYSIS' || request?.type === 'STORE_TAB_ANALYSIS') {
+    const tabId = sender?.tab?.id || request.tabId;
+    const url = request.url || sender?.tab?.url || '';
+    const domain = request.domain || (url ? new URL(url).hostname.replace(/^www\./, '') : '');
+    const currentEngine = request.engine || request.result?.engine || 'Fallback Detection';
+    const rawData = request.data || request.result?.data || request.result;
+
+    if (tabId && rawData) {
+      const normalizedData = rawData.categories || (rawData.DATA_SALE ? rawData : (rawData.data || rawData));
+      const riskInfo = computeOverallRisk(normalizedData);
       tabAnalysisStore.set(tabId, {
         tabId,
-        url: url || '',
-        domain: domain || '',
-        engine: result.engine || 'Manual Scan',
-        data: result.data,
+        url,
+        domain,
+        engine: currentEngine,
+        data: normalizedData,
         riskLevel: riskInfo.level,
         riskCount: riskInfo.count,
         timestamp: Date.now()
@@ -1373,7 +1455,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
       sendResponse({ success: true, riskLevel: riskInfo.level, riskCount: riskInfo.count });
     } else {
-      sendResponse({ success: false });
+      sendResponse({ success: false, reason: 'MISSING_TAB_OR_DATA' });
     }
     return false;
   }
