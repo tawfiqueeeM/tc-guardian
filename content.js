@@ -240,40 +240,8 @@
     return null;
   }
 
-  // Preferred: ask background.js to fetch (bypasses page CORS). Requires the
-  // FETCH_TC handler in background.js; falls back to a direct fetch otherwise.
-  function fetchViaBackground(url) {
-    return new Promise((resolve) => {
-      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
-        resolve(null);
-        return;
-      }
-      const timer = setTimeout(() => resolve(null), 10000);
-      try {
-        chrome.runtime.sendMessage({ action: 'FETCH_TC', url }, (response) => {
-          clearTimeout(timer);
-          if (chrome.runtime.lastError || !response || !response.success || typeof response.html !== 'string') {
-            resolve(null);
-          } else {
-            resolve(response.html);
-          }
-        });
-      } catch (e) {
-        clearTimeout(timer);
-        resolve(null);
-      }
-    });
-  }
-
   async function fetchTermsUrl(url) {
     try {
-      const bgHtml = await fetchViaBackground(url);
-      if (bgHtml !== null) {
-        const bgDoc = new DOMParser().parseFromString(bgHtml, 'text/html');
-        bgDoc.querySelectorAll('script, style, noscript, svg, nav, footer, header').forEach(el => el.remove());
-        return (bgDoc.body ? (bgDoc.body.innerText || bgDoc.body.textContent) : '') || '';
-      }
-
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const html = await response.text();
@@ -325,12 +293,11 @@
   /**
    * Message Passing & Standalone Fallback
    */
-  async function requestAnalysis(filteredText, domain) {
-    const payload = {
-      action: 'ANALYZE_TC',
-      text: filteredText,
-      domain: domain
-    };
+  async function requestAnalysis(filteredText, domain, remoteUrl) {
+    // Cross-origin terms: background.js fetches (no page CORS) and analyzes in one step
+    const payload = remoteUrl
+      ? { action: 'FETCH_AND_ANALYZE_TC', url: remoteUrl, text: '', domain: domain }
+      : { action: 'ANALYZE_TC', text: filteredText, domain: domain };
 
     // Try chrome.runtime.sendMessage if available
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
@@ -365,8 +332,8 @@
       }
     }
 
-    // Local Standalone Mock Fallback
-    return generateLocalMockResponse(filteredText);
+    // Local Standalone Mock Fallback (needs text; remote-only requests use a generic prompt)
+    return generateLocalMockResponse(filteredText || '');
   }
 
   function generateLocalMockResponse(text) {
@@ -1038,6 +1005,7 @@
    */
   async function init() {
     let rawText = '';
+    let remoteUrl = null;
 
     if (isTermsPage()) {
       // Analyze current page text
@@ -1046,22 +1014,28 @@
       // Sign-up context: silently pre-fetch the linked terms
       const termsUrl = findTermsLink();
       if (termsUrl) {
-        rawText = await fetchTermsUrl(termsUrl);
+        if (new URL(termsUrl).origin === window.location.origin) {
+          rawText = await fetchTermsUrl(termsUrl);
+        } else {
+          remoteUrl = termsUrl; // CORS-blocked here; let background.js fetch it
+        }
       }
     }
 
-    if (!rawText || rawText.trim().length === 0) {
-      // No terms page or terms link found on this page
-      return;
-    }
-
-    const filtered = filterHighRiskText(rawText);
-    if (!filtered || filtered.trim().length === 0) {
-      return;
+    let filtered = '';
+    if (!remoteUrl) {
+      if (!rawText || rawText.trim().length === 0) {
+        // No terms page or terms link found on this page
+        return;
+      }
+      filtered = filterHighRiskText(rawText);
+      if (!filtered || filtered.trim().length === 0) {
+        return;
+      }
     }
 
     // Run analysis via message passing or standalone fallback
-    analysisData = await requestAnalysis(filtered, currentDomain);
+    analysisData = await requestAnalysis(filtered, currentDomain, remoteUrl);
 
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
