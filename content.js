@@ -751,6 +751,32 @@
         margin-bottom: 8px;
       }
 
+      /* Recommendation Verdict Bar */
+      .tc-verdict-bar {
+        padding: 10px 18px;
+        font-size: 12.5px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-top: 1px solid #334155;
+        letter-spacing: 0.3px;
+        transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+      }
+
+      .tc-verdict-bar.verdict-stop {
+        background: rgba(239, 68, 68, 0.18);
+        color: #fca5a5;
+        border-top-color: rgba(239, 68, 68, 0.4);
+      }
+
+      .tc-verdict-bar.verdict-proceed {
+        background: rgba(16, 185, 129, 0.18);
+        color: #86efac;
+        border-top-color: rgba(16, 185, 129, 0.4);
+      }
+
       /* Footer */
       .tc-footer {
         padding: 10px 18px;
@@ -871,6 +897,24 @@
       </div>
     `;
 
+    // Evaluate Recommendation Bar:
+    // 1. If user selects "No" on any high-risk category, or has an un-overridden historical dealbreaker -> Stop
+    // 2. If all selected categories are accepted -> Safe to Proceed
+    const hasExplicitNo = presentCategories.some((catKey) => domainOverrides[catKey] === false);
+    const hasHistoricalReject = presentCategories.some((catKey) => {
+      if (domainOverrides[catKey] === true) return false;
+      const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
+      const noCount = Number(catStats.no) || 0;
+      const totalVotes = Number(catStats.yes || 0) + noCount;
+      return totalVotes > 0 && noCount >= 2 && (noCount / totalVotes) >= 0.60;
+    });
+
+    const isStop = hasExplicitNo || hasHistoricalReject;
+    const verdictClass = isStop ? 'verdict-stop' : 'verdict-proceed';
+    const verdictText = isStop
+      ? '🛑 Recommendation: Stop / Unacceptable Terms Detected'
+      : '✅ Recommendation: Safe to Proceed';
+
     root.innerHTML = `
       <style>${getCSS()}</style>
       <div class="tc-widget">
@@ -889,6 +933,11 @@
         <!-- Cards List -->
         <div class="tc-body">
           ${presentCategories.length > 0 ? categoryCardsHtml : emptyHtml}
+        </div>
+
+        <!-- Proceed / Stop Recommendation Bar -->
+        <div class="tc-verdict-bar ${verdictClass}">
+          <span>${verdictText}</span>
         </div>
 
         <!-- Footer -->
