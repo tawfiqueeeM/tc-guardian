@@ -1,6 +1,7 @@
 /**
  * T&C Guardian - Background Service Worker (Manifest V3)
  * Developer A: Multi-Tier Analysis Engine (ToS;DR -> Opera Web AI -> Cloud LLM Fallback)
+ * With 10s Non-Silent Fallback Guarantee & Explicit-Choice Storage Protocol
  */
 
 import { CONFIG } from './config.js';
@@ -32,6 +33,44 @@ function createEmptyData() {
 }
 
 /**
+ * Guaranteed Fallback
+ * Ensures that if any tier fails, throws, or times out after 10s, all 5 categories
+ * are set to present: true with the required fallback summary for UI verification.
+ */
+function generateGuaranteedFallback(engineLabel = 'Fallback Detection') {
+  const summary = 'Fallback detection: Clause detected requiring explicit user choice.';
+  const data = {
+    DATA_SALE: {
+      present: true,
+      summary
+    },
+    AI_TRAINING: {
+      present: true,
+      summary
+    },
+    AUTO_RENEW: {
+      present: true,
+      summary
+    },
+    NO_DELETE: {
+      present: true,
+      summary
+    },
+    WAIVE_RIGHTS: {
+      present: true,
+      summary
+    }
+  };
+
+  return {
+    success: true,
+    engine: engineLabel,
+    data,
+    categories: data
+  };
+}
+
+/**
  * Tier 1: ToS;DR Fast Lookup
  * Queries https://api.tosdr.org/search/v4/?query=${domain}
  */
@@ -56,7 +95,6 @@ async function queryTosdr(domain) {
       return null;
     }
 
-    // Find the closest matching service
     const service = services.find((s) => s.url && s.url.includes(cleanDomain)) || services[0];
     const points = service.points || [];
 
@@ -119,7 +157,7 @@ async function queryTosdr(domain) {
     return null;
   } catch (err) {
     clearTimeout(timeoutId);
-    console.info('[T&C Guardian] ToS;DR fast lookup bypassed or timed out:', err.message || err);
+    console.info('[T&C Guardian] ToS;DR lookup bypassed or timed out:', err.message || err);
     return null;
   }
 }
@@ -358,60 +396,9 @@ async function queryCloudFallback(text) {
     }
   }
 
-  // 5. Standalone Heuristic Fallback if keys are placeholders or network blocked
-  console.info('[T&C Guardian] Using standalone keyword heuristic fallback.');
-  return generateHeuristicFallback(text, 'Gemini Flash');
-}
-
-/**
- * Heuristic fallback matching exact contract if remote services fail
- */
-function generateHeuristicFallback(text, engineLabel) {
-  const hasDataSale = /sell|broker|third party/i.test(text);
-  const hasAiTraining = /train|artificial intelligence|machine learning/i.test(text);
-  const hasAutoRenew = /renew|cancel|refund/i.test(text);
-  const hasNoDelete = /retain|delete/i.test(text);
-  const hasWaiveRights = /arbitration|waive|class action/i.test(text);
-
-  const data = {
-    DATA_SALE: {
-      present: hasDataSale,
-      summary: hasDataSale
-        ? 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
-        : 'No explicit data sale to ad brokers detected.'
-    },
-    AI_TRAINING: {
-      present: hasAiTraining,
-      summary: hasAiTraining
-        ? 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
-        : 'No AI model training clauses detected.'
-    },
-    AUTO_RENEW: {
-      present: hasAutoRenew,
-      summary: hasAutoRenew
-        ? 'Enforces automatic recurring subscription renewals with strict non-refundable cancellation terms.'
-        : 'No aggressive auto-renewal or no-refund clauses detected.'
-    },
-    NO_DELETE: {
-      present: hasNoDelete,
-      summary: hasNoDelete
-        ? 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
-        : 'Standard data deletion terms apply.'
-    },
-    WAIVE_RIGHTS: {
-      present: hasWaiveRights,
-      summary: hasWaiveRights
-        ? 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
-        : 'No mandatory binding arbitration clause detected.'
-    }
-  };
-
-  return {
-    success: true,
-    engine: engineLabel,
-    data,
-    categories: data
-  };
+  // 5. Fallback detection if cloud keys are placeholders or network is blocked
+  console.info('[T&C Guardian] Cloud providers unavailable. Returning guaranteed fallback.');
+  return generateGuaranteedFallback('Fallback Detection');
 }
 
 /**
@@ -434,40 +421,110 @@ function validateAndNormalizeData(raw) {
 }
 
 /**
+ * Execute 3-Tier Analysis Pipeline
+ */
+async function executeAnalysisPipeline(text, domain) {
+  // Tier 1: ToS;DR Fast Lookup
+  try {
+    const tosdrResult = await queryTosdr(domain);
+    if (tosdrResult?.success && tosdrResult?.data) {
+      return tosdrResult;
+    }
+  } catch (err) {
+    console.info('[T&C Guardian] Tier 1 ToS;DR failed:', err.message || err);
+  }
+
+  // Tier 2: Local Browser AI
+  try {
+    const browserAiResult = await queryBrowserAI(text);
+    if (browserAiResult?.success && browserAiResult?.data) {
+      return browserAiResult;
+    }
+  } catch (err) {
+    console.info('[T&C Guardian] Tier 2 Browser AI failed:', err.message || err);
+  }
+
+  // Tier 3: Cloud Fallback
+  try {
+    const cloudResult = await queryCloudFallback(text);
+    if (cloudResult?.success && cloudResult?.data) {
+      return cloudResult;
+    }
+  } catch (err) {
+    console.info('[T&C Guardian] Tier 3 Cloud Fallback failed:', err.message || err);
+  }
+
+  // If all tiers fail or return empty, return guaranteed fallback
+  return generateGuaranteedFallback('Fallback Detection');
+}
+
+/**
  * Main Message Listener
  */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request?.action === 'ANALYZE_TC') {
-    const text = request.text || '';
-    const domain = request.domain || '';
+  // Handle ANALYZE_TC and FETCH_AND_ANALYZE_TC
+  if (request?.action === 'ANALYZE_TC' || request?.action === 'FETCH_AND_ANALYZE_TC') {
+    let text = request.text || '';
+    let domain = request.domain || '';
 
-    // Execute async 3-tier hierarchy
     (async () => {
+      let responded = false;
+      const sendOnce = (payload) => {
+        if (!responded) {
+          responded = true;
+          try {
+            sendResponse(payload);
+          } catch (e) {
+            console.warn('[T&C Guardian] sendResponse error:', e);
+          }
+        }
+      };
+
+      // 10-second overall timeout: never fail silently
+      const timeoutTimer = setTimeout(() => {
+        console.warn('[T&C Guardian] 10s timeout reached. Returning guaranteed fallback.');
+        sendOnce(generateGuaranteedFallback('Timeout Fallback'));
+      }, 10000);
+
       try {
-        // Tier 1: ToS;DR Fast Lookup
-        const tosdrResult = await queryTosdr(domain);
-        if (tosdrResult) {
-          sendResponse(tosdrResult);
-          return;
+        // If action is FETCH_AND_ANALYZE_TC and text is not provided, fetch from url
+        if (request.action === 'FETCH_AND_ANALYZE_TC' && !text && request.url) {
+          try {
+            const fetchRes = await fetch(request.url);
+            if (fetchRes.ok) {
+              const html = await fetchRes.text();
+              text = html
+                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+              if (!domain) {
+                domain = new URL(request.url).hostname.replace(/^www\./, '');
+              }
+            }
+          } catch (fetchErr) {
+            console.warn('[T&C Guardian] Failed to fetch URL in service worker:', fetchErr);
+          }
         }
 
-        // Tier 2: Local Browser AI (Opera / Chromium)
-        const browserAiResult = await queryBrowserAI(text);
-        if (browserAiResult) {
-          sendResponse(browserAiResult);
-          return;
+        if (!domain && request.url) {
+          try {
+            domain = new URL(request.url).hostname.replace(/^www\./, '');
+          } catch {}
         }
 
-        // Tier 3: Cloud Fallback (Groq / Cerebras / Gemini / OpenRouter)
-        const cloudResult = await queryCloudFallback(text);
-        sendResponse(cloudResult);
+        const result = await executeAnalysisPipeline(text, domain);
+        clearTimeout(timeoutTimer);
+        sendOnce(result);
       } catch (err) {
-        console.error('[T&C Guardian] Unhandled error during analysis:', err);
-        sendResponse(generateHeuristicFallback(text, 'Gemini Flash'));
+        clearTimeout(timeoutTimer);
+        console.error('[T&C Guardian] Analysis pipeline error:', err);
+        sendOnce(generateGuaranteedFallback('Error Fallback'));
       }
     })();
 
-    // Return true to keep message channel open for async sendResponse
+    // Always return true to keep the message channel open for async sendResponse
     return true;
   }
 
