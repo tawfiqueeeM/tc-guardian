@@ -393,6 +393,28 @@ header.app-header {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* Enforce distinct pastel background and border colors on risk cards */
+.risk-card.high,
+.finding-card.risk-high {
+  background-color: #fef2f2 !important;
+  border-color: #fecaca !important;
+  border-left: 5px solid var(--badge-high, #ef4444) !important;
+}
+
+.risk-card.medium,
+.finding-card.risk-medium {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+  border-left: 5px solid var(--badge-medium, #f59e0b) !important;
+}
+
+.risk-card.low,
+.finding-card.risk-low {
+  background-color: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+  border-left: 5px solid var(--badge-low, #10b981) !important;
+}
+
 .finding-card:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);

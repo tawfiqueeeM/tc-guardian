@@ -391,7 +391,7 @@ function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', 
     const snippetText = catData.snippet || '';
 
     return `
-      <div class="finding-card">
+      <div class="finding-card risk-card ${cfg.severity.toLowerCase()} ${cfg.severityClass}">
         <div class="finding-header">
           <div class="finding-icon-wrap ${cfg.severityClass}">
             ${cfg.icon}
