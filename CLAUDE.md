@@ -97,9 +97,11 @@ When `background.js` receives `ANALYZE_TC`:
 2. **Tier 2 — Local Browser AI (`Opera Web AI` / Chromium Prompt API)**:
    - Evaluates `self.ai && self.ai.languageModel` inside the service worker.
    - If available, runs prompt locally on device and returns `engine: "Opera Web AI"`.
-3. **Tier 3 — Cloud Fallback (`Gemini Flash` / `Groq` / `Cerebras` / `OpenRouter`)**:
-   - Calls configured Cloud LLM provider (Google Gemini Flash, Groq, Cerebras, or OpenRouter) with strict JSON response formatting.
-   - Returns `engine: "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter"`.
+3. **Tier 3 — Multi-Provider Cloud Fallback Ring (`CONFIG.PROVIDER_FALLBACK_ORDER`)**:
+   - Iterates asynchronously through `CONFIG.PROVIDER_FALLBACK_ORDER` (`Cerebras` -> `Groq` -> `OpenRouter` -> `Gemini`) using individual provider timeouts (`CONFIG.PROVIDER_TIMEOUT_MS = 3000`).
+   - Automatically rolls over to the next provider if rate-limited (HTTP 429), errored, or slow.
+   - Enforces strict structured JSON schema with exact snippet extraction.
+   - Returns `engine: "Cerebras" | "Groq" | "OpenRouter" | "Gemini Flash"`.
 4. **10-Second Guaranteed Fallback & Dynamic Detection**:
    - If AI or ToS;DR APIs fail, throw an error, or time out after 10 seconds, `background.js` never fails silently.
    - It dynamically evaluates `sourceText` via heuristic keyword matchers: categories where a risk clause is genuinely detected are returned with `present: true` and extracted snippets, while clean or absent categories are set to `present: false`. This ensures the UI question count is truly variable per website rather than static.

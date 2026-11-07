@@ -369,57 +369,70 @@ Respond ONLY with a valid JSON object strictly adhering to this schema without m
   "WAIVE_RIGHTS": { "present": boolean, "summary": "plain English explanation if present, or 'No risk clause detected'", "snippet": "exact quote from text if present, else ''" }
 }`;
 
+function isKeyConfigured(key) {
+  return typeof key === 'string' && key.trim().length > 0 && !key.startsWith('PASTE_YOUR_') && key !== 'your_api_key_here';
+}
+
 /**
- * OpenAI-compatible Cloud Provider (Groq / Cerebras / OpenRouter)
+ * OpenAI-compatible Cloud Provider (Cerebras / Groq / OpenRouter)
  */
-async function queryOpenAICompatible(text, endpoint, apiKey, model, engineName) {
+async function queryOpenAICompatible(text, endpoint, apiKey, model, engineName, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const promptUser = `Analyze the following terms text for the 5 categories:\n\n${text.slice(0, 10000)}`;
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: CLOUD_PROMPT_SYSTEM },
-        { role: 'user', content: promptUser }
-      ],
-      response_format: { type: 'json_object' }
-    })
-  });
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          { role: 'system', content: CLOUD_PROMPT_SYSTEM },
+          { role: 'user', content: promptUser }
+        ],
+        response_format: { type: 'json_object' }
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`${engineName} API error ${res.status}: ${errText}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`${engineName} HTTP ${res.status}: ${errText.slice(0, 180)}`);
+    }
+
+    const json = await res.json();
+    const content = json?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error(`Empty response content from ${engineName}`);
+    }
+
+    const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    const data = validateAndNormalizeData(parsed, text);
+
+    return {
+      success: true,
+      engine: engineName,
+      data,
+      categories: data
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-
-  const json = await res.json();
-  const content = json?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error(`Empty response content from ${engineName}`);
-  }
-
-  const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(cleaned);
-  const data = validateAndNormalizeData(parsed, text);
-
-  return {
-    success: true,
-    engine: engineName,
-    data,
-    categories: data
-  };
 }
 
 /**
  * Google Gemini Flash Cloud Provider
  */
-async function queryGemini(text) {
-  const apiKey = CONFIG.GEMINI_API_KEY;
-  const model = CONFIG.GEMINI_MODEL || 'gemini-2.5-flash';
+async function queryGemini(text, apiKey = CONFIG.GEMINI_API_KEY, model = CONFIG.GEMINI_MODEL || 'gemini-2.5-flash', timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const prompt = `${CLOUD_PROMPT_SYSTEM}\n\nTerms Text:\n${text.slice(0, 11000)}`;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -435,103 +448,131 @@ async function queryGemini(text) {
     }
   };
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${errText}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 180)}`);
+    }
+
+    const json = await res.json();
+    const candidateText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!candidateText) {
+      throw new Error('No candidate content returned by Gemini');
+    }
+
+    const cleaned = candidateText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    const data = validateAndNormalizeData(parsed, text);
+
+    return {
+      success: true,
+      engine: 'Gemini Flash',
+      data,
+      categories: data
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-
-  const json = await res.json();
-  const candidateText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!candidateText) {
-    throw new Error('No candidate content returned by Gemini');
-  }
-
-  const cleaned = candidateText.replace(/```json/g, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(cleaned);
-  const data = validateAndNormalizeData(parsed, text);
-
-  return {
-    success: true,
-    engine: 'Gemini Flash',
-    data,
-    categories: data
-  };
 }
 
 /**
- * Tier 3: Cloud Fallback Router (Groq / Cerebras / Gemini / OpenRouter)
+ * Tier 3: Multi-Provider Cloud AI Fallback Ring
+ * Iterates through CONFIG.PROVIDER_FALLBACK_ORDER (Cerebras -> Groq -> OpenRouter -> Gemini)
+ * Automatically rolls over to the next provider if rate-limited (429), errored, or slow.
  */
 async function queryCloudFallback(text) {
-  const provider = (CONFIG.CLOUD_PROVIDER || 'gemini').toLowerCase();
+  const fallbackOrder = Array.isArray(CONFIG.PROVIDER_FALLBACK_ORDER) && CONFIG.PROVIDER_FALLBACK_ORDER.length > 0
+    ? CONFIG.PROVIDER_FALLBACK_ORDER
+    : ['cerebras', 'groq', 'openrouter', 'gemini'];
 
-  // 1. Groq
-  if (provider === 'groq' || (CONFIG.GROQ_API_KEY && CONFIG.GROQ_API_KEY !== 'PASTE_YOUR_GROQ_API_KEY_HERE')) {
-    try {
-      if (CONFIG.GROQ_API_KEY && CONFIG.GROQ_API_KEY !== 'PASTE_YOUR_GROQ_API_KEY_HERE') {
-        return await queryOpenAICompatible(
-          text,
-          'https://api.groq.com/openai/v1/chat/completions',
-          CONFIG.GROQ_API_KEY,
-          CONFIG.GROQ_MODEL || 'llama-3.3-70b-versatile',
-          'Groq'
-        );
-      }
-    } catch (err) {
-      console.warn('[T&C Guardian] Groq provider call failed:', err.message || err);
-    }
-  }
+  const providerTimeout = CONFIG.PROVIDER_TIMEOUT_MS || 3000;
 
-  // 2. Cerebras
-  if (provider === 'cerebras' || (CONFIG.CEREBRAS_API_KEY && CONFIG.CEREBRAS_API_KEY !== 'PASTE_YOUR_CEREBRAS_API_KEY_HERE')) {
+  for (const providerId of fallbackOrder) {
+    const normalized = String(providerId).toLowerCase().trim();
+
     try {
-      if (CONFIG.CEREBRAS_API_KEY && CONFIG.CEREBRAS_API_KEY !== 'PASTE_YOUR_CEREBRAS_API_KEY_HERE') {
+      // 1. Cerebras (Ultra-Fast Inference)
+      if (normalized === 'cerebras') {
+        if (!isKeyConfigured(CONFIG.CEREBRAS_API_KEY)) {
+          console.info('[T&C Guardian Ring] Skipping Cerebras: API key not configured.');
+          continue;
+        }
+        console.info('[T&C Guardian Ring] Querying Cerebras...');
         return await queryOpenAICompatible(
           text,
           'https://api.cerebras.ai/v1/chat/completions',
           CONFIG.CEREBRAS_API_KEY,
           CONFIG.CEREBRAS_MODEL || 'llama3.1-70b',
-          'Cerebras'
+          'Cerebras',
+          providerTimeout
         );
       }
-    } catch (err) {
-      console.warn('[T&C Guardian] Cerebras provider call failed:', err.message || err);
-    }
-  }
 
-  // 3. OpenRouter
-  if (provider === 'openrouter' || (CONFIG.OPENROUTER_API_KEY && CONFIG.OPENROUTER_API_KEY !== 'PASTE_YOUR_OPENROUTER_API_KEY_HERE')) {
-    try {
-      if (CONFIG.OPENROUTER_API_KEY && CONFIG.OPENROUTER_API_KEY !== 'PASTE_YOUR_OPENROUTER_API_KEY_HERE') {
+      // 2. Groq (High-Speed Inference)
+      if (normalized === 'groq') {
+        if (!isKeyConfigured(CONFIG.GROQ_API_KEY)) {
+          console.info('[T&C Guardian Ring] Skipping Groq: API key not configured.');
+          continue;
+        }
+        console.info('[T&C Guardian Ring] Querying Groq...');
+        return await queryOpenAICompatible(
+          text,
+          'https://api.groq.com/openai/v1/chat/completions',
+          CONFIG.GROQ_API_KEY,
+          CONFIG.GROQ_MODEL || 'llama-3.3-70b-versatile',
+          'Groq',
+          providerTimeout
+        );
+      }
+
+      // 3. OpenRouter
+      if (normalized === 'openrouter') {
+        if (!isKeyConfigured(CONFIG.OPENROUTER_API_KEY)) {
+          console.info('[T&C Guardian Ring] Skipping OpenRouter: API key not configured.');
+          continue;
+        }
+        console.info('[T&C Guardian Ring] Querying OpenRouter...');
         return await queryOpenAICompatible(
           text,
           'https://openrouter.ai/api/v1/chat/completions',
           CONFIG.OPENROUTER_API_KEY,
           CONFIG.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
-          'OpenRouter'
+          'OpenRouter',
+          providerTimeout
         );
       }
-    } catch (err) {
-      console.warn('[T&C Guardian] OpenRouter provider call failed:', err.message || err);
+
+      // 4. Gemini Flash
+      if (normalized === 'gemini') {
+        if (!isKeyConfigured(CONFIG.GEMINI_API_KEY)) {
+          console.info('[T&C Guardian Ring] Skipping Gemini: API key not configured.');
+          continue;
+        }
+        console.info('[T&C Guardian Ring] Querying Gemini Flash...');
+        return await queryGemini(
+          text,
+          CONFIG.GEMINI_API_KEY,
+          CONFIG.GEMINI_MODEL || 'gemini-2.5-flash',
+          providerTimeout
+        );
+      }
+    } catch (providerErr) {
+      console.warn(`[T&C Guardian Ring] ${providerId} failed or timed out:`, providerErr.message || providerErr, '- Rolling over to next provider...');
+      // Failover to next provider in the ring
     }
   }
 
-  // 4. Gemini Flash
-  if (CONFIG.GEMINI_API_KEY && CONFIG.GEMINI_API_KEY !== 'PASTE_YOUR_GEMINI_API_KEY_HERE') {
-    try {
-      return await queryGemini(text);
-    } catch (err) {
-      console.warn('[T&C Guardian] Gemini Flash call failed:', err.message || err);
-    }
-  }
-
-  // 5. Fallback detection if cloud keys are placeholders or network is blocked
-  console.info('[T&C Guardian] Cloud providers unavailable. Returning guaranteed fallback.');
+  // All cloud providers in ring exhausted or unconfigured -> return dynamic fallback
+  console.info('[T&C Guardian Ring] All cloud providers exhausted. Returning dynamic fallback.');
   return generateGuaranteedFallback('Fallback Detection', text);
 }
 
