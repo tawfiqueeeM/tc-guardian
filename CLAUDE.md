@@ -25,9 +25,10 @@ All communication between the content script (`content.js`) and background servi
 
 ```typescript
 {
-  action: "ANALYZE_TC",
-  text: string,    // Filtered high-risk clauses (up to 12,000 characters)
-  domain: string   // Target hostname without "www." (e.g., "example.com")
+  action: "ANALYZE_TC" | "FETCH_AND_ANALYZE_TC",
+  text?: string,    // Filtered high-risk clauses (up to 12,000 characters)
+  domain?: string,  // Target hostname without "www." (e.g., "example.com")
+  url?: string      // Optional source URL when using FETCH_AND_ANALYZE_TC
 }
 ```
 
@@ -94,6 +95,9 @@ When `background.js` receives `ANALYZE_TC`:
 3. **Tier 3 — Cloud Fallback (`Gemini Flash` / `Groq` / `Cerebras` / `OpenRouter`)**:
    - Calls configured Cloud LLM provider (Google Gemini Flash, Groq, Cerebras, or OpenRouter) with strict JSON response formatting.
    - Returns `engine: "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter"`.
+4. **10-Second Guaranteed Fallback**:
+   - If AI or ToS;DR APIs fail, throw an error, or time out after 10 seconds, `background.js` never fails silently.
+   - It returns a fallback payload where all 5 categories (`DATA_SALE`, `AI_TRAINING`, `AUTO_RENEW`, `NO_DELETE`, `WAIVE_RIGHTS`) are set to `{ present: true, summary: "Fallback detection: Clause detected requiring explicit user choice." }` to ensure the UI options always render for testing.
 
 ---
 
