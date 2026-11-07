@@ -812,7 +812,7 @@
         all: initial;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         font-size: 13px;
-        color: #f8fafc;
+        color: #0f172a;
         line-height: 1.5;
         box-sizing: border-box;
       }
@@ -821,6 +821,7 @@
         box-sizing: border-box;
       }
 
+      /* Base Floating Widget Container */
       .tc-widget {
         position: fixed;
         top: 20px;
@@ -830,15 +831,40 @@
         max-width: calc(100vw - 40px);
         height: auto; /* grows/shrinks with the number of flagged clauses */
         max-height: calc(100vh - 40px);
-        background: #0f172a;
-        border: 1px solid #334155;
-        border-radius: 14px;
-        box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
+        box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05);
         display: flex;
         flex-direction: column;
         overflow: hidden;
         animation: tc-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
         backdrop-filter: blur(12px);
+        color: #0f172a;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+      }
+
+      /* Risk-Themed Accents on Main Card Container */
+      .tc-widget.risk-high,
+      .tc-widget:has(.tc-reco-danger),
+      .tc-widget:has(.risk-high),
+      .tc-widget:has(.tc-card-dealbreaker) {
+        background-color: #fef2f2 !important;
+        border-left: 5px solid #dc2626 !important;
+      }
+
+      .tc-widget.risk-med,
+      .tc-widget:has(.tc-reco-warn),
+      .tc-widget:has(.risk-med) {
+        background-color: #fffbeb !important;
+        border-left: 5px solid #d97706 !important;
+      }
+
+      .tc-widget.risk-low,
+      .tc-widget:has(.tc-reco-safe),
+      .tc-widget:has(.risk-low) {
+        background-color: #f0fdf4 !important;
+        border-left: 5px solid #16a34a !important;
       }
 
       @keyframes tc-slide-in {
@@ -858,16 +884,16 @@
         top: 20px;
         right: 20px;
         z-index: 2147483647;
-        background: #0f172a;
-        color: #f8fafc;
-        border: 1px solid #3b82f6;
+        background: #ffffff;
+        color: #0f172a;
+        border: 1px solid #e2e8f0;
         border-radius: 30px;
         padding: 8px 16px;
         cursor: pointer;
         display: flex;
         align-items: center;
         gap: 8px;
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
         font-weight: 600;
         font-size: 13px;
         transition: transform 0.15s ease, background 0.15s ease;
@@ -875,11 +901,12 @@
 
       .tc-bubble:hover {
         transform: translateY(-2px);
-        background: #1e293b;
+        background: #f8fafc;
       }
 
       .tc-bubble-dealbreaker {
         border-color: #ef4444;
+        color: #dc2626;
         animation: pulse-danger 2s infinite;
       }
 
@@ -891,8 +918,8 @@
       /* Header */
       .tc-header {
         padding: 14px 18px;
-        background: #1e293b;
-        border-bottom: 1px solid #334155;
+        background: inherit;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -909,7 +936,7 @@
         color: #ffffff;
         font-weight: 700;
         font-size: 11px;
-        padding: 2px 7px;
+        padding: 3px 8px;
         border-radius: 6px;
         letter-spacing: 0.5px;
       }
@@ -917,7 +944,7 @@
       .tc-title {
         font-size: 15px;
         font-weight: 700;
-        color: #ffffff;
+        color: #0f172a;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -925,11 +952,11 @@
 
       .tc-domain-tag {
         font-size: 11px;
-        color: #94a3b8;
-        background: #0f172a;
+        color: #475569;
+        background: #f1f5f9;
         padding: 2px 8px;
-        border-radius: 4px;
-        border: 1px solid #334155;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
         font-family: monospace;
       }
 
@@ -942,7 +969,7 @@
       .tc-icon-btn {
         background: transparent;
         border: none;
-        color: #94a3b8;
+        color: #64748b;
         cursor: pointer;
         padding: 4px 6px;
         border-radius: 6px;
@@ -954,8 +981,8 @@
       }
 
       .tc-icon-btn:hover {
-        background: #334155;
-        color: #f8fafc;
+        background: #f1f5f9;
+        color: #0f172a;
       }
 
       /* Card List */
@@ -966,6 +993,7 @@
         display: flex;
         flex-direction: column;
         gap: 14px;
+        background: transparent;
       }
 
       .tc-body::-webkit-scrollbar {
@@ -973,26 +1001,49 @@
       }
 
       .tc-body::-webkit-scrollbar-track {
-        background: #0f172a;
+        background: transparent;
       }
 
       .tc-body::-webkit-scrollbar-thumb {
-        background: #334155;
+        background: #cbd5e1;
         border-radius: 3px;
       }
 
-      /* Card */
+      /* Base Finding Card */
       .tc-card {
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
         padding: 14px 16px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
 
-      .tc-card-dealbreaker {
-        border-color: #ef4444;
-        background: rgba(239, 68, 68, 0.05);
+      /* Risk-Themed Accents on Individual Cards */
+      .tc-card.tc-card-dealbreaker,
+      .tc-card.risk-high,
+      .tc-card:has(.risk-high),
+      .tc-card:has(.tc-dealbreaker-pill),
+      .tc-reco-danger {
+        background-color: #fef2f2 !important;
+        border-left: 5px solid #dc2626 !important;
+        border-color: #fecaca !important;
+      }
+
+      .tc-card.risk-med,
+      .tc-card:has(.risk-med),
+      .tc-reco-warn {
+        background-color: #fffbeb !important;
+        border-left: 5px solid #d97706 !important;
+        border-color: #fde68a !important;
+      }
+
+      .tc-card.risk-low,
+      .tc-card:has(.risk-low),
+      .tc-reco-safe {
+        background-color: #f0fdf4 !important;
+        border-left: 5px solid #16a34a !important;
+        border-color: #bbf7d0 !important;
       }
 
       .tc-card-header {
@@ -1003,14 +1054,31 @@
         margin-bottom: 8px;
       }
 
-      .tc-card-question {
+      .tc-card-question,
+      .tc-card-title {
         font-size: 13.5px;
         font-weight: 700;
-        color: #ffffff;
+        color: #0f172a;
         line-height: 1.4;
         display: flex;
         align-items: flex-start;
         gap: 8px;
+      }
+
+      .tc-question {
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #0f172a;
+        line-height: 1.4;
+        margin-bottom: 8px;
+      }
+
+      .tc-quote {
+        font-size: 11.5px;
+        color: #64748b;
+        font-style: italic;
+        margin-top: 6px;
+        line-height: 1.45;
       }
 
       .tc-cat-icon {
@@ -1023,38 +1091,39 @@
         font-size: 9.5px;
         font-weight: 800;
         letter-spacing: 0.5px;
-        padding: 2px 6px;
-        border-radius: 4px;
+        padding: 2px 7px;
+        border-radius: 9999px;
         text-transform: uppercase;
         flex-shrink: 0;
       }
 
       .tc-risk-pill.risk-high {
-        background: rgba(239, 68, 68, 0.2);
-        color: #fca5a5;
-        border: 1px solid rgba(239, 68, 68, 0.4);
+        background: #fee2e2;
+        color: #dc2626;
+        border: 1px solid #fca5a5;
       }
 
       .tc-risk-pill.risk-med {
-        background: rgba(245, 158, 11, 0.2);
-        color: #fde68a;
-        border: 1px solid rgba(245, 158, 11, 0.35);
+        background: #fef3c7;
+        color: #d97706;
+        border: 1px solid #fde68a;
       }
 
       .tc-risk-pill.risk-low {
-        background: rgba(59, 130, 246, 0.2);
-        color: #93c5fd;
-        border: 1px solid rgba(59, 130, 246, 0.35);
+        background: #dcfce7;
+        color: #16a34a;
+        border: 1px solid #bbf7d0;
       }
 
       .tc-card-summary {
         font-size: 12px;
-        color: #cbd5e1;
+        color: #334155;
         line-height: 1.55;
         margin-bottom: 12px;
-        background: rgba(15, 23, 42, 0.6);
+        background: rgba(255, 255, 255, 0.8);
         padding: 8px 10px;
         border-radius: 6px;
+        border: 1px solid #e2e8f0;
         border-left: 3px solid #3b82f6;
       }
 
@@ -1070,24 +1139,26 @@
       }
 
       .tc-stat-pill {
-        color: #38bdf8;
+        color: #0284c7;
         font-weight: 600;
         font-size: 12px;
-        background: rgba(56, 189, 248, 0.1);
+        background: #f0f9ff;
         padding: 2px 8px;
-        border-radius: 4px;
-        border: 1px solid rgba(56, 189, 248, 0.25);
+        border-radius: 6px;
+        border: 1px solid #bae6fd;
         font-family: monospace;
       }
 
-      .tc-btn-view-clause {
-        background: rgba(59, 130, 246, 0.15);
-        border: 1px solid rgba(59, 130, 246, 0.35);
-        color: #93c5fd;
+      /* Action Buttons: Soft Rounded Aesthetic */
+      .tc-btn-view-clause,
+      .tc-view-btn {
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        color: #0369a1;
         font-size: 11px;
         font-weight: 600;
-        padding: 2px 8px;
-        border-radius: 4px;
+        padding: 4px 10px;
+        border-radius: 8px;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
@@ -1095,20 +1166,21 @@
         transition: all 0.15s ease;
       }
 
-      .tc-btn-view-clause:hover {
-        background: rgba(59, 130, 246, 0.3);
-        color: #ffffff;
-        border-color: #60a5fa;
+      .tc-btn-view-clause:hover,
+      .tc-view-btn:hover {
+        background: #e0f2fe;
+        color: #0284c7;
+        border-color: #7dd3fc;
       }
 
       .tc-btn-how-to-cancel {
-        background: rgba(245, 158, 11, 0.15);
-        border: 1px solid rgba(245, 158, 11, 0.4);
-        color: #fde68a;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #b45309;
         font-size: 11px;
         font-weight: 600;
-        padding: 2px 8px;
-        border-radius: 4px;
+        padding: 4px 10px;
+        border-radius: 8px;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
@@ -1118,16 +1190,16 @@
 
       .tc-btn-how-to-cancel:hover,
       .tc-btn-how-to-cancel.active {
-        background: rgba(245, 158, 11, 0.3);
-        color: #ffffff;
-        border-color: #fbbf24;
-        box-shadow: 0 0 8px rgba(245, 158, 11, 0.35);
+        background: #fef3c7;
+        color: #92400e;
+        border-color: #fcd34d;
+        box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
       }
 
       .tc-cancel-guide-panel {
-        background: rgba(24, 20, 10, 0.95);
-        border: 1px solid rgba(245, 158, 11, 0.35);
-        border-radius: 8px;
+        background: #fffdf5;
+        border: 1px solid #fde68a;
+        border-radius: 12px;
         padding: 12px 14px;
         margin-bottom: 12px;
         font-size: 12px;
@@ -1139,7 +1211,7 @@
         align-items: center;
         gap: 6px;
         font-weight: 700;
-        color: #fde68a;
+        color: #92400e;
         margin-bottom: 8px;
         font-size: 12px;
       }
@@ -1147,7 +1219,7 @@
       .tc-cancel-guide-steps {
         margin: 0;
         padding-left: 20px;
-        color: #f1f5f9;
+        color: #78350f;
         font-size: 11.5px;
         line-height: 1.55;
       }
@@ -1162,26 +1234,25 @@
         gap: 5px;
         margin-top: 10px;
         padding: 6px 12px;
-        background: rgba(245, 158, 11, 0.2);
-        color: #fde68a;
+        background: #fef3c7;
+        color: #92400e;
         text-decoration: none;
-        border-radius: 6px;
-        border: 1px solid rgba(245, 158, 11, 0.45);
+        border-radius: 8px;
+        border: 1px solid #fde68a;
         font-weight: 600;
         font-size: 11.5px;
         transition: all 0.15s ease;
       }
 
       .tc-cancel-guide-link:hover {
-        background: rgba(245, 158, 11, 0.35);
-        color: #ffffff;
-        border-color: #fbbf24;
+        background: #fde68a;
+        color: #78350f;
       }
 
       .tc-source-preview {
-        background: rgba(15, 23, 42, 0.9);
-        border: 1px solid #334155;
-        border-radius: 8px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
         padding: 10px 12px;
         margin-bottom: 12px;
         font-size: 12px;
@@ -1197,14 +1268,14 @@
         display: flex;
         align-items: flex-start;
         gap: 8px;
-        color: #f1f5f9;
+        color: #1e293b;
         font-size: 12px;
         line-height: 1.45;
         margin-bottom: 8px;
       }
 
       .tc-bullet-dot {
-        color: #38bdf8;
+        color: #0284c7;
         font-size: 16px;
         line-height: 1.1;
         user-select: none;
@@ -1216,18 +1287,18 @@
 
       .tc-bullet-label {
         font-weight: 700;
-        color: #93c5fd;
+        color: #0369a1;
         margin-right: 4px;
       }
 
       .tc-bullet-text {
-        color: #e2e8f0;
+        color: #334155;
       }
 
       /* Raw Legal Snippet Accordion */
       .tc-raw-accordion {
         margin-top: 6px;
-        border-top: 1px solid #1e293b;
+        border-top: 1px solid #e2e8f0;
         padding-top: 6px;
       }
 
@@ -1238,7 +1309,7 @@
         cursor: pointer;
         font-size: 11px;
         font-weight: 600;
-        color: #94a3b8;
+        color: #64748b;
         padding: 4px 2px;
         user-select: none;
         list-style: none;
@@ -1250,7 +1321,7 @@
       }
 
       .tc-accordion-toggle:hover {
-        color: #e2e8f0;
+        color: #0f172a;
       }
 
       .tc-accordion-chevron {
@@ -1264,19 +1335,20 @@
       }
 
       .tc-raw-accordion[open] .tc-accordion-toggle {
-        color: #38bdf8;
+        color: #0284c7;
         margin-bottom: 6px;
       }
 
       .tc-source-preview-body {
-        color: #cbd5e1;
+        color: #475569;
         font-style: italic;
         font-size: 11.5px;
         line-height: 1.45;
-        background: rgba(15, 23, 42, 0.7);
+        background: #ffffff;
         padding: 8px 10px;
         border-radius: 6px;
-        border-left: 3px solid #38bdf8;
+        border: 1px solid #e2e8f0;
+        border-left: 3px solid #0284c7;
         word-break: break-word;
         white-space: pre-wrap;
       }
@@ -1285,29 +1357,29 @@
         font-size: 11px;
         font-weight: 600;
         padding: 2px 7px;
-        border-radius: 4px;
+        border-radius: 6px;
       }
 
       .tc-override-pill.pill-yes {
-        background: rgba(16, 185, 129, 0.2);
-        color: #86efac;
-        border: 1px solid rgba(16, 185, 129, 0.4);
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
       }
 
       .tc-override-pill.pill-no {
-        background: rgba(239, 68, 68, 0.2);
-        color: #fca5a5;
-        border: 1px solid rgba(239, 68, 68, 0.4);
+        background: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
       }
 
       .tc-dealbreaker-pill {
         font-size: 11px;
         font-weight: 700;
         padding: 2px 7px;
-        border-radius: 4px;
-        background: rgba(239, 68, 68, 0.2);
-        color: #fca5a5;
-        border: 1px solid rgba(239, 68, 68, 0.4);
+        border-radius: 6px;
+        background: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
       }
 
       /* Prominent Action Buttons */
@@ -1320,61 +1392,63 @@
       .tc-btn {
         flex: 1;
         padding: 9px 14px;
-        border-radius: 8px;
+        border-radius: 10px;
         font-size: 13px;
         font-weight: 700;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
         transition: all 0.15s ease;
-        border: 1.5px solid transparent;
+        border: 1px solid transparent;
       }
 
       .tc-btn-yes {
-        background: rgba(16, 185, 129, 0.15);
-        color: #86efac;
-        border-color: #059669;
+        background: #ecfdf5;
+        color: #047857;
+        border-color: #a7f3d0;
       }
 
       .tc-btn-yes:hover {
-        background: #059669;
+        background: #10b981;
         color: #ffffff;
-        box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+        border-color: #10b981;
+        box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
       }
 
       .tc-btn-yes.active {
         background: #059669;
         color: #ffffff;
-        border-color: #34d399;
-        box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
+        border-color: #059669;
+        box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3);
       }
 
       .tc-btn-no {
-        background: rgba(239, 68, 68, 0.15);
-        color: #fca5a5;
-        border-color: #dc2626;
+        background: #fef2f2;
+        color: #b91c1c;
+        border-color: #fecaca;
       }
 
       .tc-btn-no:hover {
-        background: #dc2626;
+        background: #ef4444;
         color: #ffffff;
-        box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+        border-color: #ef4444;
+        box-shadow: 0 2px 6px rgba(239, 68, 68, 0.25);
       }
 
       .tc-btn-no.active {
         background: #dc2626;
         color: #ffffff;
-        border-color: #f87171;
-        box-shadow: 0 0 12px rgba(239, 68, 68, 0.5);
+        border-color: #dc2626;
+        box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
       }
 
       /* Empty State */
       .tc-empty {
         text-align: center;
         padding: 24px;
-        color: #94a3b8;
+        color: #64748b;
       }
 
       .tc-empty-icon {
@@ -1382,11 +1456,52 @@
         margin-bottom: 8px;
       }
 
+      /* Recommendation Verdict Bar */
+      .tc-reco {
+        padding: 10px 14px;
+        margin: 0 18px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.4;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .tc-reco-danger {
+        background-color: #fef2f2 !important;
+        border-left: 5px solid #dc2626 !important;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+      }
+
+      .tc-reco-warn {
+        background-color: #fffbeb !important;
+        border-left: 5px solid #d97706 !important;
+        border: 1px solid #fde68a;
+        color: #92400e;
+      }
+
+      .tc-reco-safe {
+        background-color: #f0fdf4 !important;
+        border-left: 5px solid #16a34a !important;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+      }
+
+      .tc-reco-pending {
+        background-color: #f8fafc;
+        border-left: 5px solid #94a3b8;
+        border: 1px solid #e2e8f0;
+        color: #475569;
+      }
+
       /* Footer */
       .tc-footer {
         padding: 10px 18px;
-        background: #0f172a;
-        border-top: 1px solid #1e293b;
+        background: inherit;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
         display: flex;
         align-items: center;
         justify-content: space-between;
