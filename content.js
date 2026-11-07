@@ -448,6 +448,11 @@
 
         const result = await Promise.race([sendPromise, timeoutPromise]);
         if (result && (result.data || result.categories || result.analysis)) {
+          if (isPlaceholderFallback(result)) {
+            // Backend gave up and flagged everything: that is not a real finding.
+            console.info('[TC-Guardian] Ignoring placeholder fallback payload; using local keyword check.');
+            return generateLocalMockResponse(filteredText || '');
+          }
           return normalizeAnalysisResult(result);
         }
       } catch (err) {
@@ -494,6 +499,16 @@
         }
       }
     };
+  }
+
+  // background.js's "guaranteed fallback" marks all 5 categories present with one generic summary
+  function isPlaceholderFallback(raw) {
+    const src = raw.data || raw.categories || raw.analysis;
+    if (!src || Array.isArray(src)) return false;
+    const entries = CATEGORIES.map((c) => src[c]);
+    if (entries.some((e) => !e || !isActiveFlag(e.present))) return false;
+    const summaries = new Set(entries.map((e) => String(e.summary || '')));
+    return summaries.size === 1 && /^fallback detection/i.test([...summaries][0]);
   }
 
   // Strict flag check: LLMs sometimes return "false"/"no" strings, which Boolean() would treat as true
@@ -1141,14 +1156,6 @@
       ? buildRecommendationHtml(presentCategories, overrides)
       : '';
 
-    const emptyHtml = `
-      <div class="tc-empty">
-        <div class="tc-empty-icon">🎉</div>
-        <div style="font-weight: 600; color: #f8fafc; margin-bottom: 4px;">No Critical Red Flags Found</div>
-        <div>This agreement did not trigger any of the monitored high-risk categories.</div>
-      </div>
-    `;
-
     root.innerHTML = `
       <style>${getCSS()}</style>
       <div class="tc-widget">
@@ -1183,7 +1190,7 @@
 
         <!-- Cards List -->
         <div class="tc-body">
-          ${presentCategories.length > 0 ? categoryCardsHtml : emptyHtml}
+          ${categoryCardsHtml}
         </div>
 
         <!-- Recommendation Bar -->
@@ -1309,7 +1316,7 @@
     const { profile, overrides } = await getStorageData();
 
     // Only surface the pop-up when at least one red flag is active
-    const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present);
+    const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present === true);
     if (!hasFlags) return;
 
     renderUI(analysisData, profile, overrides);
