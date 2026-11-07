@@ -110,7 +110,7 @@ When `background.js` receives `ANALYZE_TC`:
 4. **10-Second Guaranteed Fallback & High-Confidence Dynamic Detection**:
    - If AI or ToS;DR APIs fail, throw an error, or time out after 10 seconds, `background.js` never fails silently.
    - It dynamically evaluates `sourceText` via strict high-confidence keyword matchers: requiring explicit high-risk phrases (e.g. "sell your personal information", "monetize your data") rather than generic words ("privacy", "cookies", "third-party", "cancel", "delete"). Categories with genuine risks are set to `present: true`, while clean or absent categories are set to `present: false`.
-   - **Zero-Risk Default for Documentation**: If terms text contains open-source or educational disclaimers (e.g. "open-source", "creative commons", "educational project"), all categories default to `present: false` unless explicit commercial monetization or mandatory arbitration clauses are detected, ensuring clean technical sites (e.g. MDN, Wikipedia) display 0 active questions.
+   - **Zero-Risk Default for Strict Documentation**: Only applies to strict educational/open-source domains (e.g. `wikipedia.org`, `mozilla.org`, `python.org`, `.edu`). Regular commercial platforms (e.g. Quora, Reddit, Netflix, Stack Overflow) use standard keyword and AI detection and are never suppressed, ensuring clean technical documentation displays 0 questions while commercial sites trigger appropriate alerts when risk clauses match.
 
 ---
 

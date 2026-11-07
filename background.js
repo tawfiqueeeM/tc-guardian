@@ -98,39 +98,84 @@ function formatShortSummary(summary, categoryKey, isPresent = true) {
  * content.js can match and highlight them on the active page.
  */
 /**
- * Open-Source & Educational Documentation Detection Patterns:
- * Identifies sites like MDN, Wikipedia, and open-source software libraries
- * so they default to zero detected risks (0 active questions).
+ * Strict Educational & Open-Source Documentation Domains:
+ * Only verified non-profit educational/documentation authorities default
+ * to zero-risk suppression. Commercial platforms (Quora, Reddit, Netflix,
+ * StackOverflow, etc.) are strictly excluded.
  */
-const DOCS_OPEN_SOURCE_PATTERNS = [
-  /open[- ]source/i,
-  /creative\s+commons/i,
-  /cc[- ]by(?:[- ]sa)?/i,
-  /educational\s+(?:project|purpose|use|resource|institution)/i,
-  /wikimedia|wikipedia/i,
-  /mdn\s+web\s+docs|mozilla\s+developer\s+network/i,
-  /mit\s+license|apache\s+license|gnu\s+(?:general\s+public\s+license|gpl|fdl|lesser)|bsd\s+license/i,
-  /content\s+is\s+(?:available|licensed)\s+under/i,
-  /documentation\s+is\s+licensed\s+under/i,
-  /free\s+software\s+foundation/i,
-  /non[- ]profit\s+(?:educational|organization|foundation)/i,
-  /developer\.mozilla\.org|wikipedia\.org/i
+const STRICT_DOCS_DOMAINS = [
+  'wikipedia.org',
+  'wikimedia.org',
+  'wiktionary.org',
+  'mozilla.org',
+  'developer.mozilla.org',
+  'python.org',
+  'docs.python.org',
+  'w3.org',
+  'gnu.org',
+  'fsf.org',
+  'creativecommons.org',
+  'apache.org',
+  'kernel.org',
+  'linuxfoundation.org',
+  'freebsd.org',
+  'archlinux.org',
+  'debian.org',
+  'khanacademy.org',
+  'freecodecamp.org'
+];
+
+const COMMERCIAL_PLATFORMS = [
+  'quora.com',
+  'reddit.com',
+  'netflix.com',
+  'stackoverflow.com',
+  'stackexchange.com',
+  'medium.com',
+  'github.com',
+  'gitlab.com',
+  'twitter.com',
+  'x.com',
+  'linkedin.com',
+  'facebook.com',
+  'instagram.com',
+  'tiktok.com',
+  'google.com',
+  'amazon.com',
+  'microsoft.com',
+  'apple.com',
+  'spotify.com',
+  'dropbox.com',
+  'uber.com',
+  'airbnb.com'
 ];
 
 function isDocumentationOrOpenSource(sourceText, domain = '') {
-  const cleanDomain = String(domain || '').toLowerCase();
+  const cleanDomain = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+
+  // 1. Never suppress commercial platforms under any circumstances
+  if (COMMERCIAL_PLATFORMS.some((cp) => cleanDomain === cp || cleanDomain.endsWith('.' + cp))) {
+    return false;
+  }
+
+  // 2. Strict educational / open-source domain whitelist
   if (
-    cleanDomain.includes('mozilla.org') ||
-    cleanDomain.includes('wikipedia.org') ||
-    cleanDomain.includes('wikimedia.org') ||
-    cleanDomain.includes('w3.org') ||
-    cleanDomain.includes('gnu.org') ||
-    cleanDomain.includes('creativecommons.org')
+    cleanDomain.endsWith('.edu') ||
+    STRICT_DOCS_DOMAINS.some((doc) => cleanDomain === doc || cleanDomain.endsWith('.' + doc))
   ) {
     return true;
   }
-  if (!sourceText || typeof sourceText !== 'string') return false;
-  return DOCS_OPEN_SOURCE_PATTERNS.some((pattern) => pattern.test(sourceText));
+
+  // 3. For localhost, empty domain, or unverified domain:
+  // Do NOT suppress regular commercial terms just because they mention open-source / CC licenses!
+  if (!cleanDomain || cleanDomain === 'localhost') {
+    if (/\$|subscription|recurring|billing|omnicloud|payment|commercial/i.test(sourceText)) {
+      return false;
+    }
+    return /(?:wikimedia|wikipedia)\s+foundation|mozilla\s+developer\s+network|gnu\s+operating\s+system|free\s+software\s+foundation/i.test(sourceText);
+  }
+
+  return false;
 }
 
 /**
@@ -158,52 +203,53 @@ const EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS = {
 };
 
 /**
- * HIGH-CONFIDENCE Matchers:
- * Used to extract short snippets or keyword phrases directly from the source terms.
- * Requires explicit high-risk phrases rather than generic words like
- * "privacy", "cookies", "third-party", "cancel", "delete".
+ * Standard Category Snippet Matchers for Commercial Platforms:
+ * Extracts concise snippets when explicit risk clauses are present in terms.
  */
 const CATEGORY_SNIPPET_MATCHERS = {
   DATA_SALE: [
-    /(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data|identifiable)/i,
+    /(?:sell|share|disclose|license|monetiz|transfer)\s+[^.!?\n]{0,60}(?:personal\s+(?:information|data)|telemetry|user\s+profile)[^.!?\n]{0,60}(?:third[- ]part|advertis|broker|commercial|marketing|partner)/i,
+    /(?:third[- ]party|data\s+broker|advertis)[^.!?\n]{0,60}(?:sell|share|monetiz|license)[^.!?\n]{0,60}(?:personal\s+(?:information|data)|user\s+data)/i,
+    /sale\s+(?:or\s+sharing\s+)?of\s+personal\s+(?:information|data)/i,
+    /(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)/i,
     /monetiz(?:e|ing)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
-    /(?:sell|license|rent|syndicate)\s+(?:your\s+|user\s+)?(?:personal\s+)?data\s+(?:to|with)\s+(?:third[- ]parties|data\s+brokers|advertisers)/i,
-    /(?:disclose|share)\s+(?:your\s+)?personal\s+information\s+with\s+(?:commercial\s+)?data\s+brokers/i,
-    /sale\s+of\s+personal\s+(?:information|data)/i,
     /commercial\s+data\s+broker\s+licensing/i,
     /sell,\s+license,\s+and\s+syndicate\s+personal\s+data/i
   ],
   AI_TRAINING: [
+    /(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|large\s+language|llm|algorithm|neural)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|user)/i,
     /(?:train|training|fine-tun(?:e|ing))\s+(?:our\s+|proprietary\s+)?(?:ai|artificial\s+intelligence|machine\s+learning|neural\s+network|large\s+language)\s+models?\s+(?:on|using|with)\s+(?:your|user)/i,
-    /(?:use|utilize|license|ingest)\s+(?:your\s+|user\s+)?(?:content|data|uploads|prompts|submissions|inputs)\s+(?:to\s+train|for\s+training|for\s+machine\s+learning)/i,
+    /(?:use|utilize|license|ingest)\s+[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|post)[^.!?\n]{0,40}(?:train|training|machine\s+learning|ai\s+model)/i,
     /ai\s+model\s+training\s+license/i,
     /license\s+to\s+train\s+(?:proprietary\s+)?(?:artificial\s+intelligence|machine\s+learning|ai\s+models)/i,
     /train\s+artificial\s+intelligence\s+(?:models\s+and\s+neural\s+networks\s+on\s+user\s+data|systems)/i
   ],
   AUTO_RENEW: [
     /(?:subscription|plan|service|membership)\s+(?:will\s+)?automatically\s+renew/i,
-    /automatic(?:ally)?\s+renew(?:s|al)?\s+(?:at\s+the\s+)?(?:non-discounted|regular|recurring|\$\d+)/i,
+    /automatic(?:ally)?\s+renew(?:s|al)?/i,
+    /auto-renew(?:s|al)?/i,
+    /recurring\s+(?:billing|charge|subscription|fee|payment)/i,
     /mandatory\s+\$(?:99|\d+)[^.!?\n]*recurring\s+auto-renewal/i,
-    /recurring\s+(?:billing|charge|subscription)\s+until\s+cancell?ed/i,
-    /(?:all\s+)?fees\s+(?:and\s+charges\s+)?are\s+(?:strictly\s+)?non-refundable/i,
-    /no\s+refunds\s+or\s+credits\s+for\s+partial\s+(?:months|periods|billing)/i,
+    /(?:payments?|fees|charges?)\s+(?:are|is)\s+(?:strictly\s+)?non-refundable/i,
+    /no\s+refunds\s+or\s+credits\s+for\s+(?:partial|any)/i,
     /automatically\s+renew\s+subscription\s+at\s+recurring\s+rate/i
   ],
   NO_DELETE: [
-    /(?:retain|keep|store|preserve|archive)\s+[^.!?\n]{0,50}(?:indefinitely|in\s+perpetuity|permanently)[^.!?\n]{0,50}(?:after|following|upon)\s+(?:account\s+)?(?:deletion|termination)/i,
-    /(?:after|following)\s+(?:account\s+)?(?:deletion|termination)[^.!?\n]{0,50}(?:retain|keep|preserve|archive)\s+[^.!?\n]{0,50}indefinitely/i,
+    /(?:retain|keep|preserve|store|archive)\s+[^.!?\n]{0,50}(?:indefinitely|in\s+perpetuity|permanently|in\s+backups)/i,
+    /(?:even\s+)?after\s+(?:you\s+delete|deletion\s+of|termination\s+of)\s+your\s+account[^.!?\n]{0,60}(?:we\s+may\s+)?(?:retain|keep|remain|preserve)/i,
+    /(?:content|posts?|submissions?|data)\s+(?:may\s+)?remain\s+[^.!?\n]{0,40}(?:after|even\s+if)\s+(?:you\s+delete|account\s+is\s+deleted)/i,
     /indefinite\s+data\s+retention\s+policy/i,
     /retain,\s+store,\s+and\s+preserve\s+all\s+customer\s+files[^.!?\n]*indefinitely/i,
     /personal\s+records\s+and\s+database\s+logs\s+indefinitely\s+following\s+account\s+deletion/i,
     /retain,\s+store,\s+and\s+preserve\s+customer\s+data\s+and\s+activity\s+logs\s+indefinitely/i
   ],
   WAIVE_RIGHTS: [
-    /mandatory\s+(?:binding\s+)?arbitration/i,
+    /(?:mandatory|binding)\s+arbitration/i,
+    /arbitration\s+agreement/i,
     /class\s+action\s+waiver/i,
     /unconditionally\s+waive\s+any\s+right\s+to\s+participate\s+as\s+a\s+lead\s+plaintiff/i,
-    /waive\s+(?:all\s+)?rights?\s+to\s+(?:a\s+)?jury\s+trial/i,
-    /waive\s+(?:all\s+)?rights?\s+to\s+(?:participate\s+in\s+)?(?:a\s+)?class\s+action/i,
-    /disputes?\s+must\s+be\s+resolved\s+(?:exclusively\s+)?(?:by|through)\s+binding\s+arbitration/i,
+    /waive\s+[^.!?\n]{0,30}(?:jury\s+trial|class\s+action)/i,
+    /disputes?\s+[^.!?\n]{0,40}(?:resolved\s+by|subject\s+to)\s+(?:binding\s+)?arbitration/i,
     /mandatory\s+individual\s+binding\s+arbitration/i
   ]
 };
@@ -217,21 +263,20 @@ const CATEGORY_FALLBACK_PHRASES = {
 };
 
 /**
- * HIGH-CONFIDENCE RISK PATTERNS:
- * Strictly avoids generic individual words ("privacy", "cookies", "third-party", "cancel", "delete").
- * Requires explicit, actionable risk phrasing.
+ * Standard Category Risk Patterns for Commercial Platforms:
+ * Evaluates terms text against established industry risk phrasing.
  */
 const CATEGORY_RISK_PATTERNS = {
-  DATA_SALE: /(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)|monetiz(?:e|ing)\s+(?:your\s+)?data|sale\s+of\s+personal\s+information|data\s+broker\s+licensing|(?:sell|license|syndicate)\s+personal\s+data\s+to\s+third/i,
-  AI_TRAINING: /(?:train|training|fine-tun(?:e|ing))\s+(?:[^.!?\n]{0,30})?(?:ai|artificial\s+intelligence|machine\s+learning|neural\s+network)\s+models?\s+(?:on|using|with)\s+(?:your|user)|(?:use|utilize|license)\s+(?:your\s+)?(?:content|data|uploads|prompts)\s+(?:to\s+train|for\s+training)|ai\s+model\s+training\s+license/i,
-  AUTO_RENEW: /automatically\s+renew(?:s|al)?|recurring\s+auto-renewal|(?:fees\s+are\s+strictly\s+)?non-refundable\s+(?:subscription|billing)|recurring\s+(?:billing|charge)\s+until\s+cancelled/i,
-  NO_DELETE: /indefinite\s+data\s+retention|retain[^.!?\n]{1,40}indefinitely[^.!?\n]{1,40}(?:deletion|termination)|after\s+account\s+deletion[^.!?\n]{1,40}retain/i,
-  WAIVE_RIGHTS: /mandatory\s+(?:binding\s+)?arbitration|class\s+action\s+waiver|waive\s+(?:all\s+)?rights?\s+to\s+(?:a\s+)?jury\s+trial|waive\s+(?:all\s+)?rights?\s+to\s+class\s+action/i
+  DATA_SALE: /(?:sell|share|disclose|license|monetiz)\s+[^.!?\n]{0,50}(?:personal\s+(?:information|data)|user\s+data)[^.!?\n]{0,50}(?:third[- ]part|advertis|broker|marketing)|sale\s+(?:or\s+sharing\s+)?of\s+personal\s+information|monetiz(?:e|ing)\s+(?:your\s+)?data/i,
+  AI_TRAINING: /(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|llm|algorithm)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|user)|(?:use|license)\s+[^.!?\n]{0,30}(?:content|data|upload|prompt)\s+[^.!?\n]{0,30}(?:train|training|ai\s+model)|ai\s+model\s+training/i,
+  AUTO_RENEW: /automatic(?:ally)?\s+renew(?:s|al)?|auto-renew|recurring\s+(?:billing|charge|subscription)|non-refundable\s+(?:subscription|billing|fee)/i,
+  NO_DELETE: /retain\s+[^.!?\n]{0,40}(?:indefinitely|permanently)|(?:after\s+(?:account\s+)?deletion|even\s+if\s+you\s+delete)[^.!?\n]{0,40}(?:retain|remain|preserve)|indefinite\s+data\s+retention/i,
+  WAIVE_RIGHTS: /(?:mandatory|binding)\s+arbitration|arbitration\s+agreement|class\s+action\s+waiver|waive\s+[^.!?\n]{0,30}(?:jury\s+trial|class\s+action)/i
 };
 
 /**
  * Checks whether sourceText genuinely contains high-confidence risk clauses for categoryKey.
- * Strictly avoids generic words like "privacy", "cookies", "third-party", "cancel", "delete".
+ * Strictly avoids generic single words while allowing standard detection on commercial platforms.
  * Automatically enforces a ZERO-RISK DEFAULT for open-source and educational documentation text.
  */
 function hasCategoryRisk(sourceText, categoryKey, domain = '') {
