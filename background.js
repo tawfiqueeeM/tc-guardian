@@ -1075,6 +1075,90 @@ async function executeAnalysisPipeline(text, domain) {
 }
 
 /**
+ * Tab Analysis Store & Page-Identity Lifecycle Management
+ * Stores active analysis per tab, rejects stale navigations, and updates dynamic toolbar icon.
+ */
+const tabAnalysisStore = new Map();
+
+function computeOverallRisk(data) {
+  if (!data) return 'CLEAN';
+  // High Risk (Dealbreakers): DATA_SALE, WAIVE_RIGHTS
+  if (data.DATA_SALE?.present || data.WAIVE_RIGHTS?.present) {
+    return 'HIGH';
+  }
+  // Medium Risk: AI_TRAINING, AUTO_RENEW
+  if (data.AI_TRAINING?.present || data.AUTO_RENEW?.present) {
+    return 'MEDIUM';
+  }
+  // Low Risk: NO_DELETE
+  if (data.NO_DELETE?.present) {
+    return 'LOW';
+  }
+  return 'CLEAN';
+}
+
+function updateToolbarIcon(tabId, riskLevel) {
+  if (typeof chrome === 'undefined' || !chrome.action || !chrome.action.setIcon) return;
+  let iconPath = 'icons/guardian-low-risk.png';
+  if (riskLevel === 'HIGH') {
+    iconPath = 'icons/guardian-high-risk.png';
+  } else if (riskLevel === 'MEDIUM') {
+    iconPath = 'icons/guardian-medium-risk.png';
+  } else if (riskLevel === 'LOW' || riskLevel === 'CLEAN') {
+    iconPath = 'icons/guardian-low-risk.png';
+  }
+
+  try {
+    chrome.action.setIcon({
+      tabId: tabId,
+      path: {
+        16: iconPath,
+        32: iconPath,
+        48: iconPath,
+        128: iconPath
+      }
+    }, () => {
+      if (chrome.runtime.lastError) {
+        // Silently swallow errors if tab was closed during icon change
+      }
+    });
+  } catch (e) {
+    console.warn('[T&C Guardian] updateToolbarIcon failed:', e);
+  }
+}
+
+function urlsMatchPageIdentity(urlA, urlB) {
+  if (!urlA || !urlB) return false;
+  if (urlA === urlB) return true;
+  try {
+    const a = new URL(urlA);
+    const b = new URL(urlB);
+    return a.origin === b.origin && a.pathname === b.pathname;
+  } catch {
+    return urlA.split('#')[0].split('?')[0] === urlB.split('#')[0].split('?')[0];
+  }
+}
+
+// Clear stale tab analysis on navigation
+if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.url) {
+      const record = tabAnalysisStore.get(tabId);
+      if (record && !urlsMatchPageIdentity(changeInfo.url, record.url)) {
+        tabAnalysisStore.delete(tabId);
+        updateToolbarIcon(tabId, 'DEFAULT');
+      }
+    }
+  });
+}
+
+if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    tabAnalysisStore.delete(tabId);
+  });
+}
+
+/**
  * Main Message Listener
  */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -1099,7 +1183,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // 10-second overall timeout: never fail silently
       const timeoutTimer = setTimeout(() => {
         console.warn('[T&C Guardian] 10s timeout reached. Returning guaranteed fallback.');
-        sendOnce(generateGuaranteedFallback('Timeout Fallback', text, domain));
+        const fallbackRes = generateGuaranteedFallback('Timeout Fallback', text, domain);
+        if (sender?.tab?.id && fallbackRes?.data) {
+          const tabId = sender.tab.id;
+          const tabUrl = sender.tab.url || request.url || '';
+          const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
+          const riskLevel = computeOverallRisk(fallbackRes.data);
+          tabAnalysisStore.set(tabId, {
+            tabId,
+            url: tabUrl,
+            domain: tabDomain,
+            engine: fallbackRes.engine || 'Timeout Fallback',
+            data: fallbackRes.data,
+            riskLevel,
+            timestamp: Date.now()
+          });
+          updateToolbarIcon(tabId, riskLevel);
+        }
+        sendOnce(fallbackRes);
       }, 10000);
 
       try {
@@ -1132,16 +1233,107 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         const result = await executeAnalysisPipeline(text, domain);
         clearTimeout(timeoutTimer);
+
+        // Store analysis per tab and update dynamic toolbar icon
+        if (sender?.tab?.id && result?.data) {
+          const tabId = sender.tab.id;
+          const tabUrl = sender.tab.url || request.url || '';
+          const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
+          const riskLevel = computeOverallRisk(result.data);
+          tabAnalysisStore.set(tabId, {
+            tabId,
+            url: tabUrl,
+            domain: tabDomain,
+            engine: result.engine || 'Analysis Pipeline',
+            data: result.data,
+            riskLevel,
+            timestamp: Date.now()
+          });
+          updateToolbarIcon(tabId, riskLevel);
+        }
+
         sendOnce(result);
       } catch (err) {
         clearTimeout(timeoutTimer);
         console.error('[T&C Guardian] Analysis pipeline error:', err);
-        sendOnce(generateGuaranteedFallback('Error Fallback', text, domain));
+        const errFallback = generateGuaranteedFallback('Error Fallback', text, domain);
+        if (sender?.tab?.id && errFallback?.data) {
+          const tabId = sender.tab.id;
+          const tabUrl = sender.tab.url || request.url || '';
+          const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
+          const riskLevel = computeOverallRisk(errFallback.data);
+          tabAnalysisStore.set(tabId, {
+            tabId,
+            url: tabUrl,
+            domain: tabDomain,
+            engine: errFallback.engine || 'Error Fallback',
+            data: errFallback.data,
+            riskLevel,
+            timestamp: Date.now()
+          });
+          updateToolbarIcon(tabId, riskLevel);
+        }
+        sendOnce(errFallback);
       }
     })();
 
     // Always return true to keep the message channel open for async sendResponse
     return true;
+  }
+
+  // Retrieve stored analysis state for a given tab (called by popup.js)
+  if (request?.action === 'GET_TAB_ANALYSIS') {
+    const tabId = request.tabId;
+    const reqUrl = request.url || '';
+    const reqDomain = request.domain || '';
+
+    const record = tabAnalysisStore.get(tabId);
+    if (!record) {
+      sendResponse({ success: false, reason: 'NOT_ANALYZED' });
+      return false;
+    }
+
+    // Page identity check: if navigation to a different page occurred, reject stale result
+    if (reqUrl && record.url && !urlsMatchPageIdentity(reqUrl, record.url)) {
+      tabAnalysisStore.delete(tabId);
+      updateToolbarIcon(tabId, 'DEFAULT');
+      sendResponse({ success: false, reason: 'STALE_NAV' });
+      return false;
+    }
+
+    sendResponse({
+      success: true,
+      tabId: record.tabId,
+      url: record.url,
+      domain: record.domain || reqDomain,
+      engine: record.engine || 'Unknown',
+      data: record.data,
+      riskLevel: record.riskLevel,
+      timestamp: record.timestamp
+    });
+    return false;
+  }
+
+  // Store/update tab analysis directly from an on-demand popup scan
+  if (request?.action === 'STORE_TAB_ANALYSIS') {
+    const { tabId, url, domain, result } = request;
+    if (tabId && result?.data) {
+      const riskLevel = computeOverallRisk(result.data);
+      tabAnalysisStore.set(tabId, {
+        tabId,
+        url: url || '',
+        domain: domain || '',
+        engine: result.engine || 'Manual Scan',
+        data: result.data,
+        riskLevel,
+        timestamp: Date.now()
+      });
+      updateToolbarIcon(tabId, riskLevel);
+      sendResponse({ success: true, riskLevel });
+    } else {
+      sendResponse({ success: false });
+    }
+    return false;
   }
 
   // Explicit Choice Model: Save explicit user preference without automated assumptions
