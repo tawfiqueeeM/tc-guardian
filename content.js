@@ -61,7 +61,36 @@
   const TERMS_LINK_REGEX = /terms of|terms &|terms and|privacy policy|user agreement|conditions of use|eula/i;
   const SIGNUP_LINK_REGEX = /sign ?up|register|create (an )?account|join|get started|log ?in|sign ?in|checkout|check out|place order|subscribe/i;
 
+  // Risk weighting: HIGH = dealbreaker-class, others = medium/low
+  const CATEGORY_RISK = {
+    DATA_SALE: 'high',
+    WAIVE_RIGHTS: 'high',
+    AI_TRAINING: 'medium',
+    AUTO_RENEW: 'medium',
+    NO_DELETE: 'medium'
+  };
+
+  // Used to locate the source clause for each category in the terms text
+  const CLAUSE_PATTERNS = {
+    DATA_SALE: /\b(sell|sold|selling|data brokers?|third[- ]part(y|ies)|advertis\w*|share[sd]?\b[^.]{0,40}(personal|data))/gi,
+    AI_TRAINING: /\b(train(ing|ed)?|artificial intelligence|machine learning|AI|models?)\b/gi,
+    AUTO_RENEW: /\b(renew\w*|recurring|subscription|refund\w*|cancel\w*)\b/gi,
+    NO_DELETE: /\b(retain\w*|retention|delet\w*|backups?|archiv\w*|indefinite\w*)\b/gi,
+    WAIVE_RIGHTS: /\b(arbitration|class[- ]action|jury|waive[sd]?)\b/gi
+  };
+
+  // Fallback single-keyword text fragments when only a URL is known
+  const CLAUSE_FRAGMENT_KEYWORDS = {
+    DATA_SALE: 'third part',
+    AI_TRAINING: 'train',
+    AUTO_RENEW: 'renew',
+    NO_DELETE: 'retain',
+    WAIVE_RIGHTS: 'arbitration'
+  };
+
   // State
+  const clauseRefs = {};      // category -> { el } (on-page) or { snippet } (fetched text)
+  let clauseSourceUrl = null; // URL of the terms document when it is not the current page
   let analysisData = null;
   let isMinimized = false;
   let shadowRoot = null;
@@ -258,6 +287,100 @@
     }
   }
 
+  /**
+   * Clause location ("Read That Clause")
+   */
+  function scoreText(text, category) {
+    const matches = text.match(CLAUSE_PATTERNS[category]);
+    return matches ? matches.length : 0;
+  }
+
+  function buildClauseRefsFromDom() {
+    const host = document.getElementById('tc-guardian-host');
+    const sel = 'p, li, blockquote, td, dd, section, div, article';
+    const blocks = Array.from(document.querySelectorAll(sel))
+      .filter((el) => !(host && host.contains(el)))
+      .filter((el) => !el.querySelector(sel + ', h1, h2, h3'))
+      .map((el) => ({ el, text: (el.textContent || '').replace(/\s+/g, ' ').trim() }))
+      .filter((b) => b.text.length >= 40 && b.text.length <= 3000);
+
+    CATEGORIES.forEach((cat) => {
+      let best = null;
+      let bestScore = 0;
+      blocks.forEach((b) => {
+        const s = scoreText(b.text, cat);
+        if (s > bestScore) { best = b; bestScore = s; }
+      });
+      if (best) clauseRefs[cat] = { el: best.el };
+    });
+  }
+
+  function buildClauseRefsFromText(rawText) {
+    const paragraphs = rawText.split(/\n\s*\n/)
+      .map((p) => p.replace(/\s+/g, ' ').trim())
+      .filter((p) => p.length >= 40 && p.length <= 3000);
+
+    CATEGORIES.forEach((cat) => {
+      let best = null;
+      let bestScore = 0;
+      paragraphs.forEach((p) => {
+        const s = scoreText(p, cat);
+        if (s > bestScore) { best = p; bestScore = s; }
+      });
+      if (best) clauseRefs[cat] = { snippet: best };
+    });
+  }
+
+  function encodeFragmentPart(str) {
+    return encodeURIComponent(str).replace(/-/g, '%2D');
+  }
+
+  function buildTextFragment(cat) {
+    const ref = clauseRefs[cat];
+    if (ref && ref.snippet) {
+      const words = ref.snippet.split(' ');
+      if (words.length > 8) {
+        return `#:~:text=${encodeFragmentPart(words.slice(0, 4).join(' '))},${encodeFragmentPart(words.slice(-4).join(' '))}`;
+      }
+      return `#:~:text=${encodeFragmentPart(ref.snippet)}`;
+    }
+    return `#:~:text=${encodeFragmentPart(CLAUSE_FRAGMENT_KEYWORDS[cat])}`;
+  }
+
+  function flashElement(el) {
+    const prev = {
+      bg: el.style.backgroundColor,
+      tr: el.style.transition,
+      ol: el.style.outline
+    };
+    el.style.transition = 'background-color 0.3s ease';
+    el.style.backgroundColor = '#fde047';
+    el.style.outline = '2px solid #f59e0b';
+    setTimeout(() => {
+      el.style.backgroundColor = prev.bg;
+      el.style.outline = prev.ol;
+      setTimeout(() => { el.style.transition = prev.tr; }, 400);
+    }, 2500);
+  }
+
+  function canJumpToClause(cat) {
+    return Boolean(clauseRefs[cat] && clauseRefs[cat].el) || Boolean(clauseSourceUrl);
+  }
+
+  function jumpToClause(cat) {
+    const ref = clauseRefs[cat];
+    if (ref && ref.el && document.contains(ref.el)) {
+      ref.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      flashElement(ref.el);
+      return;
+    }
+    if (clauseSourceUrl) {
+      // Terms live on another page: open it with a native text-fragment highlight
+      const base = clauseSourceUrl.split('#')[0];
+      window.open(base + buildTextFragment(cat), '_blank', 'noopener');
+    }
+  }
+
   function filterHighRiskText(rawText) {
     if (!rawText) return '';
     const paragraphs = rawText.split(/\n\s*\n|\r\n\s*\r\n/);
@@ -373,6 +496,11 @@
     };
   }
 
+  // Strict flag check: LLMs sometimes return "false"/"no" strings, which Boolean() would treat as true
+  function isActiveFlag(v) {
+    return v === true || (typeof v === 'string' && /^(true|yes)$/i.test(v.trim()));
+  }
+
   function normalizeAnalysisResult(raw) {
     const engine = raw.engine || 'AI Engine';
     const categoriesSource = raw.data || raw.categories || raw.analysis || {};
@@ -388,7 +516,7 @@
 
       if (catData) {
         normalized[catKey] = {
-          present: Boolean(catData.present),
+          present: isActiveFlag(catData.present),
           summary: catData.summary || CATEGORY_META[catKey].defaultSummary
         };
       } else {
@@ -444,6 +572,7 @@
         z-index: 2147483647;
         width: 440px;
         max-width: calc(100vw - 40px);
+        height: auto; /* grows/shrinks with the number of flagged clauses */
         max-height: calc(100vh - 40px);
         background: #0f172a;
         border: 1px solid #334155;
@@ -636,7 +765,8 @@
       .tc-body {
         padding: 14px 18px;
         overflow-y: auto;
-        max-height: calc(100vh - 220px);
+        flex: 1 1 auto;
+        min-height: 0; /* lets the body shrink and scroll inside the capped widget */
         display: flex;
         flex-direction: column;
         gap: 12px;
@@ -802,6 +932,40 @@
         margin-bottom: 8px;
       }
 
+      .tc-risk-tag {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+
+      .tc-risk-high { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+      .tc-risk-medium { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+
+      .tc-btn-view {
+        flex: 0 0 auto;
+        background: #1e293b;
+        color: #93c5fd;
+        border-color: #334155;
+      }
+
+      .tc-btn-view:hover { background: #334155; color: #ffffff; }
+
+      /* Recommendation Bar */
+      .tc-reco {
+        padding: 10px 18px;
+        font-size: 12px;
+        font-weight: 600;
+        border-top: 1px solid #1e293b;
+      }
+
+      .tc-reco-danger { background: rgba(220, 38, 38, 0.2); color: #fecaca; border-top-color: #dc2626; }
+      .tc-reco-warn { background: rgba(245, 158, 11, 0.15); color: #fde68a; border-top-color: #f59e0b; }
+      .tc-reco-safe { background: rgba(16, 185, 129, 0.15); color: #a7f3d0; border-top-color: #10b981; }
+      .tc-reco-pending { background: rgba(148, 163, 184, 0.1); color: #cbd5e1; }
+
       /* Footer */
       .tc-footer {
         padding: 10px 18px;
@@ -814,6 +978,23 @@
         color: #64748b;
       }
     `;
+  }
+
+  function buildRecommendationHtml(presentCategories, overrides) {
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const rejected = presentCategories.filter((c) => domainOverrides[c] === false);
+    const answered = presentCategories.filter((c) => Object.prototype.hasOwnProperty.call(domainOverrides, c));
+
+    if (rejected.some((c) => CATEGORY_RISK[c] === 'high')) {
+      return '<div class="tc-reco tc-reco-danger">🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.</div>';
+    }
+    if (rejected.length > 0) {
+      return '<div class="tc-reco tc-reco-warn">⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.</div>';
+    }
+    if (answered.length === presentCategories.length) {
+      return '<div class="tc-reco tc-reco-safe">✅ Safe to Proceed.</div>';
+    }
+    return '<div class="tc-reco tc-reco-pending">Answer each flagged clause to get a recommendation.</div>';
   }
 
   async function renderUI(analysis, profile, overrides) {
@@ -867,6 +1048,7 @@
         <div class="tc-card ${status.code === 'DEALBREAKER' ? 'tc-card-dealbreaker' : ''}">
           <div class="tc-card-header">
             <span class="tc-card-title">${meta.icon} ${meta.name}</span>
+            <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
           </div>
           <div>
             <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
@@ -879,10 +1061,15 @@
             <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no">
               ${isCurrentNo ? '✕ ' : ''}Unacceptable (No)
             </button>
+            ${canJumpToClause(catKey) ? `<button class="tc-btn tc-btn-view tc-view-btn" data-cat="${catKey}" title="Jump to this clause in the terms">📖 View Clause</button>` : ''}
           </div>
         </div>
       `;
     }).join('');
+
+    const recommendationHtml = presentCategories.length > 0
+      ? buildRecommendationHtml(presentCategories, overrides)
+      : '';
 
     const emptyHtml = `
       <div class="tc-empty">
@@ -929,6 +1116,9 @@
           ${presentCategories.length > 0 ? categoryCardsHtml : emptyHtml}
         </div>
 
+        <!-- Recommendation Bar -->
+        ${recommendationHtml}
+
         <!-- Footer -->
         <div class="tc-footer">
           <span>Preferences learn automatically as you answer.</span>
@@ -957,8 +1147,13 @@
       }
     });
 
+    // View Clause buttons
+    root.querySelectorAll('.tc-view-btn').forEach((btn) => {
+      btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
+    });
+
     // Accept / Reject Buttons
-    root.querySelectorAll('.tc-btn').forEach((btn) => {
+    root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         const target = e.currentTarget;
         const catKey = target.getAttribute('data-cat');
@@ -1010,12 +1205,15 @@
     if (isTermsPage()) {
       // Analyze current page text
       rawText = (document.body && (document.body.innerText || document.body.textContent)) || '';
+      buildClauseRefsFromDom();
     } else if (hasSignupIndicators()) {
       // Sign-up context: silently pre-fetch the linked terms
       const termsUrl = findTermsLink();
       if (termsUrl) {
+        clauseSourceUrl = termsUrl;
         if (new URL(termsUrl).origin === window.location.origin) {
           rawText = await fetchTermsUrl(termsUrl);
+          if (rawText) buildClauseRefsFromText(rawText);
         } else {
           remoteUrl = termsUrl; // CORS-blocked here; let background.js fetch it
         }
