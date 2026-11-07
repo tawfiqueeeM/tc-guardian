@@ -1,0 +1,6 @@
+export const CONFIG = {
+  GEMINI_API_KEY: "PASTE_YOUR_GEMINI_API_KEY_HERE",
+  GEMINI_MODEL: "gemini-2.5-flash",
+  TOSDR_TIMEOUT_MS: 2000
+};
+
