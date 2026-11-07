@@ -1081,49 +1081,86 @@ async function executeAnalysisPipeline(text, domain) {
 const tabAnalysisStore = new Map();
 
 function computeOverallRisk(data) {
-  if (!data) return 'CLEAN';
+  if (!data) return { level: 'CLEAN', count: 0 };
+  let count = 0;
+  if (data.DATA_SALE?.present) count++;
+  if (data.AI_TRAINING?.present) count++;
+  if (data.AUTO_RENEW?.present) count++;
+  if (data.NO_DELETE?.present) count++;
+  if (data.WAIVE_RIGHTS?.present) count++;
+
+  let level = 'CLEAN';
   // High Risk (Dealbreakers): DATA_SALE, WAIVE_RIGHTS
   if (data.DATA_SALE?.present || data.WAIVE_RIGHTS?.present) {
-    return 'HIGH';
+    level = 'HIGH';
+  } else if (data.AI_TRAINING?.present || data.AUTO_RENEW?.present) {
+    // Medium Risk: AI_TRAINING, AUTO_RENEW
+    level = 'MEDIUM';
+  } else if (data.NO_DELETE?.present) {
+    // Low Risk: NO_DELETE
+    level = 'LOW';
   }
-  // Medium Risk: AI_TRAINING, AUTO_RENEW
-  if (data.AI_TRAINING?.present || data.AUTO_RENEW?.present) {
-    return 'MEDIUM';
-  }
-  // Low Risk: NO_DELETE
-  if (data.NO_DELETE?.present) {
-    return 'LOW';
-  }
-  return 'CLEAN';
+  return { level, count };
 }
 
-function updateToolbarIcon(tabId, riskLevel) {
-  if (typeof chrome === 'undefined' || !chrome.action || !chrome.action.setIcon) return;
+function updateToolbarIcon(tabId, riskLevel, riskCount = 0) {
+  if (typeof chrome === 'undefined' || !chrome.action) return;
   let iconPath = 'icons/guardian-low-risk.png';
+  let badgeColor = '#16a34a'; // Green for low/safe
+
   if (riskLevel === 'HIGH') {
     iconPath = 'icons/guardian-high-risk.png';
+    badgeColor = '#dc2626'; // Red for high
   } else if (riskLevel === 'MEDIUM') {
     iconPath = 'icons/guardian-medium-risk.png';
+    badgeColor = '#d97706'; // Amber for medium
   } else if (riskLevel === 'LOW' || riskLevel === 'CLEAN') {
     iconPath = 'icons/guardian-low-risk.png';
+    badgeColor = '#16a34a'; // Green for low/safe
   }
 
+  // Set toolbar icon image
+  if (chrome.action.setIcon) {
+    try {
+      chrome.action.setIcon({
+        tabId: tabId,
+        path: {
+          16: iconPath,
+          32: iconPath,
+          48: iconPath,
+          128: iconPath
+        }
+      }, () => {
+        if (chrome.runtime.lastError) {
+          // Silently swallow errors if tab was closed during icon change
+        }
+      });
+    } catch (e) {
+      console.warn('[T&C Guardian] updateToolbarIcon setIcon failed:', e);
+    }
+  }
+
+  // Set numeric badge & background color
   try {
-    chrome.action.setIcon({
-      tabId: tabId,
-      path: {
-        16: iconPath,
-        32: iconPath,
-        48: iconPath,
-        128: iconPath
-      }
-    }, () => {
-      if (chrome.runtime.lastError) {
-        // Silently swallow errors if tab was closed during icon change
-      }
-    });
+    const badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
+    if (chrome.action.setBadgeText) {
+      chrome.action.setBadgeText({
+        tabId: tabId,
+        text: badgeText
+      }, () => {
+        if (chrome.runtime.lastError) {}
+      });
+    }
+    if (chrome.action.setBadgeBackgroundColor && badgeText) {
+      chrome.action.setBadgeBackgroundColor({
+        tabId: tabId,
+        color: badgeColor
+      }, () => {
+        if (chrome.runtime.lastError) {}
+      });
+    }
   } catch (e) {
-    console.warn('[T&C Guardian] updateToolbarIcon failed:', e);
+    console.warn('[T&C Guardian] updateToolbarIcon badge failed:', e);
   }
 }
 
@@ -1146,7 +1183,7 @@ if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
       const record = tabAnalysisStore.get(tabId);
       if (record && !urlsMatchPageIdentity(changeInfo.url, record.url)) {
         tabAnalysisStore.delete(tabId);
-        updateToolbarIcon(tabId, 'DEFAULT');
+        updateToolbarIcon(tabId, 'DEFAULT', 0);
       }
     }
   });
@@ -1188,17 +1225,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const tabId = sender.tab.id;
           const tabUrl = sender.tab.url || request.url || '';
           const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
-          const riskLevel = computeOverallRisk(fallbackRes.data);
+          const riskInfo = computeOverallRisk(fallbackRes.data);
           tabAnalysisStore.set(tabId, {
             tabId,
             url: tabUrl,
             domain: tabDomain,
             engine: fallbackRes.engine || 'Timeout Fallback',
             data: fallbackRes.data,
-            riskLevel,
+            riskLevel: riskInfo.level,
+            riskCount: riskInfo.count,
             timestamp: Date.now()
           });
-          updateToolbarIcon(tabId, riskLevel);
+          updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
         }
         sendOnce(fallbackRes);
       }, 10000);
@@ -1239,17 +1277,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const tabId = sender.tab.id;
           const tabUrl = sender.tab.url || request.url || '';
           const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
-          const riskLevel = computeOverallRisk(result.data);
+          const riskInfo = computeOverallRisk(result.data);
           tabAnalysisStore.set(tabId, {
             tabId,
             url: tabUrl,
             domain: tabDomain,
             engine: result.engine || 'Analysis Pipeline',
             data: result.data,
-            riskLevel,
+            riskLevel: riskInfo.level,
+            riskCount: riskInfo.count,
             timestamp: Date.now()
           });
-          updateToolbarIcon(tabId, riskLevel);
+          updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
         }
 
         sendOnce(result);
@@ -1261,17 +1300,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const tabId = sender.tab.id;
           const tabUrl = sender.tab.url || request.url || '';
           const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
-          const riskLevel = computeOverallRisk(errFallback.data);
+          const riskInfo = computeOverallRisk(errFallback.data);
           tabAnalysisStore.set(tabId, {
             tabId,
             url: tabUrl,
             domain: tabDomain,
             engine: errFallback.engine || 'Error Fallback',
             data: errFallback.data,
-            riskLevel,
+            riskLevel: riskInfo.level,
+            riskCount: riskInfo.count,
             timestamp: Date.now()
           });
-          updateToolbarIcon(tabId, riskLevel);
+          updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
         }
         sendOnce(errFallback);
       }
@@ -1296,7 +1336,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Page identity check: if navigation to a different page occurred, reject stale result
     if (reqUrl && record.url && !urlsMatchPageIdentity(reqUrl, record.url)) {
       tabAnalysisStore.delete(tabId);
-      updateToolbarIcon(tabId, 'DEFAULT');
+      updateToolbarIcon(tabId, 'DEFAULT', 0);
       sendResponse({ success: false, reason: 'STALE_NAV' });
       return false;
     }
@@ -1309,6 +1349,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       engine: record.engine || 'Unknown',
       data: record.data,
       riskLevel: record.riskLevel,
+      riskCount: record.riskCount || 0,
       timestamp: record.timestamp
     });
     return false;
@@ -1318,18 +1359,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request?.action === 'STORE_TAB_ANALYSIS') {
     const { tabId, url, domain, result } = request;
     if (tabId && result?.data) {
-      const riskLevel = computeOverallRisk(result.data);
+      const riskInfo = computeOverallRisk(result.data);
       tabAnalysisStore.set(tabId, {
         tabId,
         url: url || '',
         domain: domain || '',
         engine: result.engine || 'Manual Scan',
         data: result.data,
-        riskLevel,
+        riskLevel: riskInfo.level,
+        riskCount: riskInfo.count,
         timestamp: Date.now()
       });
-      updateToolbarIcon(tabId, riskLevel);
-      sendResponse({ success: true, riskLevel });
+      updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
+      sendResponse({ success: true, riskLevel: riskInfo.level, riskCount: riskInfo.count });
     } else {
       sendResponse({ success: false });
     }

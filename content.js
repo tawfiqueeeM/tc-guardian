@@ -350,6 +350,70 @@
     );
   }
 
+  const SIGNUP_CHECKOUT_LEGAL_URL_REGEX = /(?:sign-?up|register|registration|join|create-?account|create_account|checkout|check-out|cart|billing|subscription|subscribe|order|purchase|payment|pay|terms|privacy|(?:^|[^a-z])tos(?:[^a-z]|$)|conditions|legal|eula|policy|policies)/i;
+  const SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX = /(?:sign\s*up|register|registration|create\s*(?:an\s*)?account|join\s*(?:today|us|now)?|checkout|check\s*out|place\s*order|billing|subscription|subscribe|payment|terms\s*of|privacy\s*policy|legal\s*terms|user\s*agreement|conditions\s*of\s*use|eula)/i;
+  const SIGNUP_CHECKOUT_ACTION_BTN_REGEX = /^(?:sign\s*up|create\s*(?:an\s*)?account|register|complete\s*(?:registration|sign\s*up|order)|place\s*order|checkout|subscribe|start\s*(?:free\s*)?trial|pay\s*now)$/i;
+
+  /**
+   * Check if current page is a Signup, Checkout, or Legal page
+   */
+  function isSignupCheckoutOrLegalPage() {
+    // 1. Direct Terms/Legal page detection
+    if (isTermsPage()) return true;
+
+    // 2. URL Path, Hash, Search, or Full URL Match
+    try {
+      const url = window.location.href || '';
+      const pathname = window.location.pathname || '';
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      if (
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(pathname) ||
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(hash) ||
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(search) ||
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(url)
+      ) {
+        return true;
+      }
+    } catch (e) {}
+
+    // 3. Page Title & Meta Tags Check
+    try {
+      const title = document.title || '';
+      if (SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX.test(title)) return true;
+
+      const metaTags = document.querySelectorAll('meta[name="description"], meta[property="og:title"], meta[property="og:description"], meta[name="keywords"]');
+      for (const meta of metaTags) {
+        const content = meta.getAttribute('content') || '';
+        if (SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX.test(content)) return true;
+      }
+    } catch (e) {}
+
+    // 4. Signup / Checkout Interactive Elements
+    try {
+      // Buttons indicating primary registration, checkout, or subscription action
+      const buttons = document.querySelectorAll('button, input[type="submit"], a.btn, a[role="button"]');
+      for (const btn of buttons) {
+        const text = (btn.textContent || btn.value || '').trim();
+        if (SIGNUP_CHECKOUT_ACTION_BTN_REGEX.test(text)) return true;
+      }
+
+      // Password input combined with terms agreement checkbox or registration cues
+      const hasPassword = Boolean(document.querySelector('input[type="password"]'));
+      const hasTermsCheckbox = Boolean(document.querySelector('input[type="checkbox"][name*="terms" i], input[type="checkbox"][id*="terms" i], input[type="checkbox"][name*="agree" i], input[type="checkbox"][id*="agree" i]'));
+      if (hasPassword && hasTermsCheckbox) return true;
+
+      // Form action URL targeting signup/register/checkout
+      const forms = document.querySelectorAll('form[action]');
+      for (const form of forms) {
+        const action = form.getAttribute('action') || '';
+        if (SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(action)) return true;
+      }
+    } catch (e) {}
+
+    return false;
+  }
+
   function findTermsLink() {
     const links = Array.from(document.querySelectorAll('a[href]'));
     for (const a of links) {
@@ -1788,9 +1852,26 @@
         }
         currentOverrides[currentDomain][catKey] = isYes;
 
-        // Save & immediately re-render live
+        // Save preferences
         await saveStorageData(currentProfile, currentOverrides);
-        renderUI(analysis, currentProfile, currentOverrides);
+
+        if (isYes) {
+          // When the user clicks "[ Yes ]" / accepts the risks, automatically close and hide the floating overlay so it gets out of their way.
+          isMinimized = true;
+          const widget = root.querySelector('.tc-widget');
+          if (widget) {
+            widget.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+            widget.style.opacity = '0';
+            widget.style.transform = 'translateY(10px)';
+            setTimeout(() => {
+              renderUI(analysis, currentProfile, currentOverrides);
+            }, 200);
+          } else {
+            renderUI(analysis, currentProfile, currentOverrides);
+          }
+        } else {
+          renderUI(analysis, currentProfile, currentOverrides);
+        }
       });
     });
   }
@@ -1819,8 +1900,8 @@
       // Analyze current page text
       rawText = (document.body && (document.body.innerText || document.body.textContent)) || '';
       buildClauseRefsFromDom();
-    } else if (hasSignupIndicators()) {
-      // Sign-up context: silently pre-fetch the linked terms
+    } else {
+      // Look for linked terms (on signup/checkout or general pages with terms link)
       const termsUrl = findTermsLink();
       if (termsUrl) {
         clauseSourceUrl = termsUrl;
@@ -1848,15 +1929,21 @@
     // Extract and map source paragraph excerpts for deep-linking
     sourceClauses = extractSourceClauses(rawText);
 
-    // Run analysis via message passing or standalone fallback
+    // Run analysis via message passing or standalone fallback (updates background toolbar badge silently!)
     analysisData = await requestAnalysis(filtered, currentDomain, remoteUrl);
 
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
 
     // Only surface the pop-up when at least one red flag is active
-    const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present === true);
+    const hasFlags = CATEGORIES.some((c) => analysisData && analysisData.categories && analysisData.categories[c] && analysisData.categories[c].present === true);
     if (!hasFlags) return;
+
+    // Check if the current page is a Signup, Checkout, or Legal page
+    if (!isSignupCheckoutOrLegalPage()) {
+      // Silent analysis complete! Toolbar badge is updated in background.js, do not inject overlay.
+      return;
+    }
 
     renderUI(analysisData, profile, overrides);
   }

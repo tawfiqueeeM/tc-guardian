@@ -10,7 +10,7 @@ To prevent Git merge conflicts and race conditions, each developer strictly owns
 
 | Developer | Owned Files | Description |
 | :--- | :--- | :--- |
-| **Developer A** | `manifest.json`<br>`background.js`<br>`popup.html`<br>`popup.js`<br>`config.example.js`<br>`config.js`<br>`.gitignore`<br>`CLAUDE.md` | Background service worker, popup dashboard, API integrations (ToS;DR, Opera/Chromium AI, Gemini Flash), project configurations, and manifest definition. |
+| **Developer A** | `manifest.json`<br>`background.js`<br>`popup.html`<br>`popup.js`<br>`popup.css`<br>`icons/*`<br>`config.example.js`<br>`config.js`<br>`.gitignore`<br>`CLAUDE.md` | Background service worker, popup dashboard ("This Website" primary view & "Preferences" secondary view), dynamic toolbar icon switching, API integrations (ToS;DR, Opera/Chromium AI, Gemini Flash, Groq, Cerebras, OpenRouter), project configurations, and manifest definition. |
 | **Developer B** | `content.js`<br>`test-signup.html`<br>`dummy-terms.html` | Page detection, background link pre-fetching, Shadow DOM floating UI overlay, user preference learning & storage. |
 
 > **CRITICAL RULE**: Neither developer may edit, delete, or commit files owned by the other developer under any circumstances.
@@ -77,6 +77,25 @@ All communication between the content script (`content.js`) and background servi
   }
 }
 ```
+
+### 2.1 Background-to-Popup Result Retrieval & Toolbar Icon Contract
+
+`background.js` caches tab analysis records keyed by `tabId` and validates page identity (URL origin & pathname). Navigation to a different URL clears stale results and resets the toolbar icon.
+
+- **`GET_TAB_ANALYSIS`** (Sent by `popup.js`):
+  `{ action: "GET_TAB_ANALYSIS", tabId: number, url?: string, domain?: string }`
+  Returns cached analysis or `{ success: false, reason: "NOT_ANALYZED" | "STALE_NAV" }`.
+- **`STORE_TAB_ANALYSIS`** (Sent by `popup.js` on manual scan):
+  `{ action: "STORE_TAB_ANALYSIS", tabId: number, url: string, domain: string, result: object }`
+- **Dynamic Toolbar Icon & Severity Mapping**:
+  - `HIGH` (`DATA_SALE` or `WAIVE_RIGHTS` present): `icons/guardian-high-risk.png`, badge background `#dc2626` (red)
+  - `MEDIUM` (`AI_TRAINING` or `AUTO_RENEW` present): `icons/guardian-medium-risk.png`, badge background `#d97706` (amber)
+  - `LOW` (`NO_DELETE` present) / `CLEAN` (0 findings): `icons/guardian-low-risk.png`, badge background `#16a34a` (green)
+  - **Numeric Badge**: `chrome.action.setBadgeText` displays active risk count (`present === true`). Cleared when count is 0 or on tab navigation.
+- **Conditional In-Page Overlay UX**:
+  - Content script analyzes terms silently on all pages so `background.js` can update the toolbar badge without interrupting browsing.
+  - In-page floating overlay is only rendered on Signup, Checkout, or Legal pages (`isSignupCheckoutOrLegalPage()`).
+  - Clicking `[ Yes ]` (accepting clauses) immediately closes and hides the floating overlay out of the user's way.
 
 ---
 
