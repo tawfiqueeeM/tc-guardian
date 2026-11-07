@@ -55,7 +55,11 @@
   };
 
   const HIGH_RISK_REGEX = /arbitration|third party|sell|broker|train|artificial intelligence|machine learning|renew|cancel|refund|retain|delete|waive|class action/i;
-  const TERMS_REGEX = /terms|privacy|tos|conditions|legal/i;
+  // URL/title match; `tos` only as a standalone token so "photos"/"autos" don't match
+  const TERMS_REGEX = /terms|privacy|(^|[^a-z])tos([^a-z]|$)|conditions|legal|eula/i;
+  // Anchor text match for terms/privacy links
+  const TERMS_LINK_REGEX = /terms of|terms &|terms and|privacy policy|user agreement|conditions of use|eula/i;
+  const SIGNUP_LINK_REGEX = /sign ?up|register|create (an )?account|join|get started|log ?in|sign ?in|checkout|check out|place order|subscribe/i;
 
   // State
   let analysisData = null;
@@ -125,14 +129,8 @@
 
   function saveStorageData(profile, overrides) {
     return new Promise((resolve) => {
-      // Always sync to localStorage as well for standalone resiliency
-      try {
-        localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
-        localStorage.setItem(STORAGE_KEYS.SITE_OVERRIDES, JSON.stringify(overrides));
-      } catch (e) {
-        // localStorage might fail if quota exceeded
-      }
-
+      // Prefer extension storage. Never write to the host page's localStorage
+      // when it is available: page scripts could read or tamper with it.
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         try {
           chrome.storage.local.set({
@@ -145,6 +143,14 @@
         } catch (e) {
           console.warn('[TC-Guardian] chrome.storage.local save failed:', e);
         }
+      }
+
+      // Standalone fallback (no extension context, e.g. local test pages)
+      try {
+        localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
+        localStorage.setItem(STORAGE_KEYS.SITE_OVERRIDES, JSON.stringify(overrides));
+      } catch (e) {
+        // localStorage might fail if quota exceeded
       }
       resolve();
     });
@@ -212,20 +218,62 @@
     return isNameMatch && textLen > 1000;
   }
 
+  function hasSignupIndicators() {
+    // Sign-up, login (password field) and checkout flows
+    if (document.querySelector('form, input[type="checkbox"], input[type="password"], button[type="submit"], input[type="submit"]')) {
+      return true;
+    }
+    return Array.from(document.querySelectorAll('a, button')).some(
+      (el) => SIGNUP_LINK_REGEX.test((el.textContent || '').trim())
+    );
+  }
+
   function findTermsLink() {
-    const links = Array.from(document.querySelectorAll('a'));
+    const links = Array.from(document.querySelectorAll('a[href]'));
     for (const a of links) {
       const text = (a.textContent || '').trim();
-      const href = a.getAttribute('href') || '';
-      if (TERMS_REGEX.test(text) || TERMS_REGEX.test(href)) {
-        return a.href;
+      const label = a.getAttribute('aria-label') || a.getAttribute('title') || '';
+      if (TERMS_LINK_REGEX.test(text) || TERMS_LINK_REGEX.test(label)) {
+        if (/^https?:/i.test(a.href)) return a.href;
       }
     }
     return null;
   }
 
+  // Preferred: ask background.js to fetch (bypasses page CORS). Requires the
+  // FETCH_TC handler in background.js; falls back to a direct fetch otherwise.
+  function fetchViaBackground(url) {
+    return new Promise((resolve) => {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        resolve(null);
+        return;
+      }
+      const timer = setTimeout(() => resolve(null), 10000);
+      try {
+        chrome.runtime.sendMessage({ action: 'FETCH_TC', url }, (response) => {
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !response || !response.success || typeof response.html !== 'string') {
+            resolve(null);
+          } else {
+            resolve(response.html);
+          }
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        resolve(null);
+      }
+    });
+  }
+
   async function fetchTermsUrl(url) {
     try {
+      const bgHtml = await fetchViaBackground(url);
+      if (bgHtml !== null) {
+        const bgDoc = new DOMParser().parseFromString(bgHtml, 'text/html');
+        bgDoc.querySelectorAll('script, style, noscript, svg, nav, footer, header').forEach(el => el.remove());
+        return (bgDoc.body ? (bgDoc.body.innerText || bgDoc.body.textContent) : '') || '';
+      }
+
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const html = await response.text();
@@ -304,7 +352,8 @@
         });
 
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Timeout waiting for background response')), 2500);
+          // Background may chain ToS;DR (2s) -> local AI -> Gemini; allow for all tiers.
+          setTimeout(() => reject(new Error('Timeout waiting for background response')), 20000);
         });
 
         const result = await Promise.race([sendPromise, timeoutPromise]);
@@ -321,35 +370,37 @@
   }
 
   function generateLocalMockResponse(text) {
-    const hasDataSale = /sell|broker|third party/i.test(text);
-    const hasAiTraining = /train|artificial intelligence|machine learning/i.test(text);
-    const hasAutoRenew = /renew|cancel|refund/i.test(text);
-    const hasNoDelete = /retain|delete/i.test(text);
-    const hasWaiveRights = /arbitration|waive|class action/i.test(text);
+    // Stricter phrase-level patterns to limit false positives.
+    const hasDataSale = /\b(sell|sold|selling)\b[^.]{0,60}(personal|data|information)|data brokers?|sale of (your )?(personal )?(data|information)/i.test(text);
+    const hasAiTraining = /train(ing)?\b[^.]{0,60}\b(models?|artificial intelligence|machine learning|\bAI\b)|\b(artificial intelligence|machine learning)\b[^.]{0,60}\btrain/i.test(text);
+    const hasAutoRenew = /auto(matic(ally)?)?[- ]?renew|renews? automatically|recurring (billing|subscription|charge)/i.test(text);
+    const hasNoDelete = /(retain|keep|preserve|store)[^.]{0,80}(indefinite(ly)?|after (you )?(delet|terminat|clos))|backups?[^.]{0,60}(indefinite|retain)/i.test(text);
+    const hasWaiveRights = /binding arbitration|class[- ]action (waiver|waive)|waive[^.]{0,60}(jury|class action)/i.test(text);
 
+    const note = ' (Keyword match only; review the original terms to confirm.)';
     return {
       success: true,
       engine: 'Keyword Heuristic (Standalone Fallback)',
       categories: {
         DATA_SALE: {
           present: hasDataSale,
-          summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
+          summary: 'The terms appear to mention selling or sharing personal data with third parties.' + note
         },
         AI_TRAINING: {
           present: hasAiTraining,
-          summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
+          summary: 'The terms appear to mention training AI or machine learning models.' + note
         },
         AUTO_RENEW: {
           present: hasAutoRenew,
-          summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.'
+          summary: 'The terms appear to mention automatic renewal or recurring billing.' + note
         },
         NO_DELETE: {
           present: hasNoDelete,
-          summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
+          summary: 'The terms appear to mention retaining data indefinitely or after deletion.' + note
         },
         WAIVE_RIGHTS: {
           present: hasWaiveRights,
-          summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
+          summary: 'The terms appear to mention binding arbitration or a class action / jury waiver.' + note
         }
       }
     };
@@ -991,8 +1042,8 @@
     if (isTermsPage()) {
       // Analyze current page text
       rawText = (document.body && (document.body.innerText || document.body.textContent)) || '';
-    } else {
-      // Look for a link to terms
+    } else if (hasSignupIndicators()) {
+      // Sign-up context: silently pre-fetch the linked terms
       const termsUrl = findTermsLink();
       if (termsUrl) {
         rawText = await fetchTermsUrl(termsUrl);
@@ -1015,7 +1066,10 @@
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
 
-    // Render Shadow DOM UI
+    // Only surface the pop-up when at least one red flag is active
+    const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present);
+    if (!hasFlags) return;
+
     renderUI(analysisData, profile, overrides);
   }
 
