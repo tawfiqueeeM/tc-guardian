@@ -973,6 +973,33 @@
         border-radius: 3px;
       }
 
+      .tc-subbar-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .tc-autoread {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        color: #94a3b8;
+      }
+
+      .tc-voice-notice {
+        padding: 6px 18px;
+        font-size: 11px;
+        color: #fde68a;
+        background: rgba(245, 158, 11, 0.12);
+      }
+
+      .tc-speak-btn {
+        margin-left: auto;
+        padding: 0 4px;
+        font-size: 12px;
+      }
+
       .tc-risk-tag {
         font-size: 10px;
         font-weight: 700;
@@ -1039,6 +1066,10 @@
     );
   }
 
+  function getHeadlineText(data) {
+    return data.question || `Do you accept this on ${currentDomain}: "${firstSentence(data.summary)}"?`;
+  }
+
   function getClauseQuote(cat, data) {
     let quote = data.snippet || '';
     if (!quote) {
@@ -1051,7 +1082,7 @@
   }
 
   function buildQuestionHtml(cat, data) {
-    const headline = data.question || `Do you accept this on ${currentDomain}: "${firstSentence(data.summary)}"?`;
+    const headline = getHeadlineText(data);
     const summary = String(data.summary || '').trim();
     const showDetail = !data.question
       ? summary.replace(/\s+/g, ' ').length > firstSentence(summary).length + 1
@@ -1065,25 +1096,254 @@
     `;
   }
 
-  function buildRecommendationHtml(presentCategories, overrides) {
+  function getRecommendation(presentCategories, overrides) {
     const domainOverrides = (overrides && overrides[currentDomain]) || {};
     const rejected = presentCategories.filter((c) => domainOverrides[c] === false);
     const answered = presentCategories.filter((c) => Object.prototype.hasOwnProperty.call(domainOverrides, c));
 
     if (rejected.some((c) => CATEGORY_RISK[c] === 'high')) {
-      return '<div class="tc-reco tc-reco-danger">🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.</div>';
+      return { cls: 'tc-reco-danger', text: '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.', spoken: 'High risk violation detected. Proceeding is strongly discouraged.' };
     }
     if (rejected.length > 0) {
-      return '<div class="tc-reco tc-reco-warn">⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.</div>';
+      return { cls: 'tc-reco-warn', text: '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.', spoken: 'Minor risk detected. Review the highlighted clauses before proceeding.' };
     }
     if (answered.length === presentCategories.length) {
-      return '<div class="tc-reco tc-reco-safe">✅ Safe to Proceed.</div>';
+      return { cls: 'tc-reco-safe', text: '✅ Safe to Proceed.', spoken: 'Safe to proceed.' };
     }
-    return '<div class="tc-reco tc-reco-pending">Answer each flagged clause to get a recommendation.</div>';
+    return { cls: 'tc-reco-pending', text: 'Answer each flagged clause to get a recommendation.', spoken: '' };
+  }
+
+  function buildRecommendationHtml(presentCategories, overrides) {
+    const r = getRecommendation(presentCategories, overrides);
+    return `<div class="tc-reco ${r.cls}">${r.text}</div>`;
+  }
+
+  /**
+   * Voice assistant: free, keyless, built on the browser's Web Speech API.
+   * - Read aloud: speechSynthesis
+   * - Answer by voice: SpeechRecognition (Chrome sends the audio to Google's speech service)
+   */
+  const VOICE_KEY = 'tc_guardian_voice';
+  let voiceAutoRead = false;
+  let voiceMode = null;          // null | 'reading' | 'listening'
+  let voiceCancelled = false;
+  let activeRecognition = null;
+  let voiceNotice = '';
+  let currentAnalysis = null;
+
+  function voiceSupported() {
+    return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  }
+
+  function recognitionCtor() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  function loadVoiceSettings() {
+    return new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        try {
+          chrome.storage.local.get([VOICE_KEY], (res) => {
+            voiceAutoRead = Boolean(res && res[VOICE_KEY] && res[VOICE_KEY].autoRead);
+            resolve();
+          });
+          return;
+        } catch (e) { /* fall through */ }
+      }
+      resolve();
+    });
+  }
+
+  function saveVoiceSettings() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try { chrome.storage.local.set({ [VOICE_KEY]: { autoRead: voiceAutoRead } }); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function setVoiceMode(mode, notice) {
+    voiceMode = mode;
+    if (notice !== undefined) voiceNotice = notice;
+    applyVoiceButtonState();
+  }
+
+  function applyVoiceButtonState() {
+    if (!shadowRoot) return;
+    const readBtn = shadowRoot.getElementById('tc-voice-read');
+    const answerBtn = shadowRoot.getElementById('tc-voice-answer');
+    if (readBtn) {
+      readBtn.textContent = voiceMode === 'reading' ? '⏹' : '🔊';
+      readBtn.title = voiceMode === 'reading' ? 'Stop' : 'Read flagged clauses aloud';
+    }
+    if (answerBtn) {
+      answerBtn.textContent = voiceMode === 'listening' ? '⏹' : '🎤';
+      answerBtn.title = voiceMode === 'listening' ? 'Stop' : 'Answer by voice (say yes / no / skip)';
+    }
+    const notice = shadowRoot.getElementById('tc-voice-notice');
+    if (notice) {
+      notice.textContent = voiceNotice;
+      notice.style.display = voiceNotice ? 'block' : 'none';
+    }
+  }
+
+  function stopVoice() {
+    voiceCancelled = true;
+    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+    if (activeRecognition) {
+      try { activeRecognition.abort(); } catch (e) { /* ignore */ }
+      activeRecognition = null;
+    }
+    setVoiceMode(null, '');
+  }
+
+  function speak(text) {
+    return new Promise((resolve) => {
+      if (!voiceSupported() || !text) { resolve(); return; }
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = document.documentElement.lang || 'en-US';
+      u.rate = 1;
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      window.speechSynthesis.speak(u);
+    });
+  }
+
+  function getPresentCategories() {
+    if (!currentAnalysis) return [];
+    return CATEGORIES.filter((c) => currentAnalysis.categories[c] && currentAnalysis.categories[c].present === true);
+  }
+
+  function spokenClause(cat) {
+    const data = currentAnalysis.categories[cat];
+    const risk = CATEGORY_RISK[cat] === 'high' ? 'High risk' : 'Medium risk';
+    return `${CATEGORY_META[cat].name}. ${risk}. ${getHeadlineText(data).replace(/[“”"]/g, '')}`;
+  }
+
+  async function readAllAloud() {
+    const cats = getPresentCategories();
+    if (cats.length === 0) return;
+    voiceCancelled = false;
+    setVoiceMode('reading', '');
+    await speak(`T&C Guardian found ${cats.length} flagged ${cats.length === 1 ? 'clause' : 'clauses'} on ${currentDomain}.`);
+    for (const cat of cats) {
+      if (voiceCancelled) return;
+      await speak(spokenClause(cat));
+    }
+    if (!voiceCancelled) setVoiceMode(null, '');
+  }
+
+  async function readOneAloud(cat) {
+    stopVoice();
+    voiceCancelled = false;
+    setVoiceMode('reading', '');
+    await speak(spokenClause(cat));
+    if (!voiceCancelled) setVoiceMode(null, '');
+  }
+
+  function listenOnce(timeoutMs) {
+    return new Promise((resolve) => {
+      const Ctor = recognitionCtor();
+      if (!Ctor) { resolve({ transcript: null, error: 'unsupported' }); return; }
+      const rec = new Ctor();
+      rec.lang = 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 3;
+      let done = false;
+      let timer = null;
+      const finish = (transcript, error) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (activeRecognition === rec) activeRecognition = null;
+        resolve({ transcript, error: error || null });
+      };
+      rec.onresult = (e) => {
+        const alts = Array.from(e.results[0] || []).map((a) => a.transcript).join(' ');
+        finish(alts.toLowerCase());
+      };
+      rec.onerror = (ev) => finish(null, ev.error || 'error');
+      rec.onend = () => finish(null);
+      timer = setTimeout(() => { try { rec.stop(); } catch (e) { /* ignore */ } finish(null); }, timeoutMs);
+      activeRecognition = rec;
+      try { rec.start(); } catch (e) { finish(null, 'start-failed'); }
+    });
+  }
+
+  function parseVoiceAnswer(t) {
+    if (!t) return null;
+    if (/\b(skip|next|later|pass)\b/.test(t)) return 'skip';
+    if (/\b(no|not|reject|unacceptable|decline|disagree|never)\b/.test(t)) return 'no';
+    if (/\b(yes|yeah|yep|accept|okay|ok|agree|fine|sure)\b/.test(t)) return 'yes';
+    return null;
+  }
+
+  async function answerByVoice() {
+    const cats = getPresentCategories();
+    if (cats.length === 0) return;
+    if (!recognitionCtor()) {
+      setVoiceMode(null, 'Voice answers are not supported in this browser.');
+      return;
+    }
+    voiceCancelled = false;
+    setVoiceMode('listening', '');
+    await speak(`Let's go through ${cats.length} ${cats.length === 1 ? 'clause' : 'clauses'}. After each one, say yes to accept, no if it is unacceptable, or skip.`);
+
+    for (const cat of cats) {
+      if (voiceCancelled) return;
+      await speak(spokenClause(cat));
+      let answer = null;
+      for (let attempt = 0; attempt < 2 && !answer && !voiceCancelled; attempt++) {
+        setVoiceMode('listening', '🎤 Listening… say yes, no or skip');
+        const { transcript, error } = await listenOnce(8000);
+        if (voiceCancelled) return;
+        if (error === 'not-allowed' || error === 'service-not-allowed') {
+          setVoiceMode(null, 'Microphone access was blocked for this site. Allow it in the address bar to answer by voice.');
+          return;
+        }
+        answer = parseVoiceAnswer(transcript);
+        if (!answer && attempt === 0) await speak("Sorry, I didn't catch that. Please say yes, no, or skip.");
+      }
+      if (voiceCancelled) return;
+      if (answer === 'yes' || answer === 'no') {
+        await recordChoice(cat, answer === 'yes');
+        await speak(answer === 'yes' ? 'Accepted.' : 'Marked as unacceptable.');
+      }
+    }
+
+    if (voiceCancelled) return;
+    const reco = getRecommendation(getPresentCategories(), lastOverrides);
+    if (reco.spoken) await speak(reco.spoken);
+    if (!voiceCancelled) setVoiceMode(null, '');
+  }
+
+  let lastProfile = null;
+  let lastOverrides = null;
+
+  async function recordChoice(catKey, isYes) {
+    const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+
+    if (!currentProfile[catKey]) {
+      currentProfile[catKey] = { yes: 0, no: 0 };
+    }
+    if (isYes) {
+      currentProfile[catKey].yes = (currentProfile[catKey].yes || 0) + 1;
+    } else {
+      currentProfile[catKey].no = (currentProfile[catKey].no || 0) + 1;
+    }
+
+    if (!currentOverrides[currentDomain]) {
+      currentOverrides[currentDomain] = {};
+    }
+    currentOverrides[currentDomain][catKey] = isYes;
+
+    await saveStorageData(currentProfile, currentOverrides);
+    renderUI(currentAnalysis, currentProfile, currentOverrides);
   }
 
   async function renderUI(analysis, profile, overrides) {
     const root = ensureShadowRoot();
+    currentAnalysis = analysis;
+    lastProfile = profile;
+    lastOverrides = overrides;
 
     if (isMinimized) {
       // Count dealbreakers
@@ -1134,6 +1394,7 @@
           <div class="tc-card-header">
             <span class="tc-card-title">${meta.icon} ${meta.name}</span>
             <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
+            ${voiceSupported() ? `<button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>` : ''}
           </div>
           <div>
             <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
@@ -1169,6 +1430,8 @@
             </div>
           </div>
           <div class="tc-header-actions">
+            ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
+            ${voiceSupported() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
             <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
             <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
           </div>
@@ -1177,8 +1440,12 @@
         <!-- Subheader Meta -->
         <div class="tc-subbar">
           <span class="tc-engine-pill">${escapeHtml(analysis.engine)}</span>
-          <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
+          <span class="tc-subbar-right">
+            ${voiceSupported() ? `<label class="tc-autoread"><input type="checkbox" id="tc-autoread" ${voiceAutoRead ? 'checked' : ''}> Auto-read</label>` : ''}
+            <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
+          </span>
         </div>
+        <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
 
         <!-- Dealbreaker Alert Banner -->
         ${hasDealbreaker ? `
@@ -1206,11 +1473,13 @@
 
     // Event Handlers
     root.getElementById('tc-minimize-btn').addEventListener('click', () => {
+      stopVoice();
       isMinimized = true;
       renderUI(analysis, profile, overrides);
     });
 
     root.getElementById('tc-close-btn').addEventListener('click', () => {
+      stopVoice();
       isMinimized = true;
       renderUI(analysis, profile, overrides);
     });
@@ -1229,35 +1498,36 @@
       btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
     });
 
+    // Voice controls
+    const readBtn = root.getElementById('tc-voice-read');
+    if (readBtn) {
+      readBtn.addEventListener('click', () => {
+        if (voiceMode) stopVoice(); else readAllAloud();
+      });
+    }
+    const answerBtn = root.getElementById('tc-voice-answer');
+    if (answerBtn) {
+      answerBtn.addEventListener('click', () => {
+        if (voiceMode) stopVoice(); else answerByVoice();
+      });
+    }
+    const autoReadBox = root.getElementById('tc-autoread');
+    if (autoReadBox) {
+      autoReadBox.addEventListener('change', (e) => {
+        voiceAutoRead = e.target.checked;
+        saveVoiceSettings();
+      });
+    }
+    root.querySelectorAll('.tc-speak-btn').forEach((btn) => {
+      btn.addEventListener('click', () => readOneAloud(btn.getAttribute('data-cat')));
+    });
+    applyVoiceButtonState();
+
     // Accept / Reject Buttons
     root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         const target = e.currentTarget;
-        const catKey = target.getAttribute('data-cat');
-        const choice = target.getAttribute('data-choice');
-        const isYes = (choice === 'yes');
-
-        const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
-
-        // Increment global counter
-        if (!currentProfile[catKey]) {
-          currentProfile[catKey] = { yes: 0, no: 0 };
-        }
-        if (isYes) {
-          currentProfile[catKey].yes = (currentProfile[catKey].yes || 0) + 1;
-        } else {
-          currentProfile[catKey].no = (currentProfile[catKey].no || 0) + 1;
-        }
-
-        // Set per-site override for domain
-        if (!currentOverrides[currentDomain]) {
-          currentOverrides[currentDomain] = {};
-        }
-        currentOverrides[currentDomain][catKey] = isYes;
-
-        // Save & immediately re-render live
-        await saveStorageData(currentProfile, currentOverrides);
-        renderUI(analysis, currentProfile, currentOverrides);
+        await recordChoice(target.getAttribute('data-cat'), target.getAttribute('data-choice') === 'yes');
       });
     });
   }
@@ -1319,8 +1589,17 @@
     const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present === true);
     if (!hasFlags) return;
 
+    await loadVoiceSettings();
     renderUI(analysisData, profile, overrides);
+
+    // Chrome only allows speech after user activation on the page, so this may stay silent
+    if (voiceAutoRead && voiceSupported()) readAllAloud();
   }
+
+  // Stop any speech when leaving the page
+  window.addEventListener('pagehide', () => {
+    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  });
 
   // Run when document is ready
   if (document.readyState === 'loading') {
