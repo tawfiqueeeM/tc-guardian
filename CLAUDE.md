@@ -42,26 +42,31 @@ All communication between the content script (`content.js`) and background servi
     DATA_SALE: {
       present: boolean,
       summary: string,
-      snippet: string  // Short quote or keyword phrase from the source text for in-page highlighting
+      shortSummary: string, // Concise 1-2 sentence plain-English summary (< 150 chars)
+      snippet: string       // Extracted clause quote from source text (max 250 chars)
     },
     AI_TRAINING: {
       present: boolean,
       summary: string,
+      shortSummary: string,
       snippet: string
     },
     AUTO_RENEW: {
       present: boolean,
       summary: string,
+      shortSummary: string,
       snippet: string
     },
     NO_DELETE: {
       present: boolean,
       summary: string,
+      shortSummary: string,
       snippet: string
     },
     WAIVE_RIGHTS: {
       present: boolean,
       summary: string,
+      shortSummary: string,
       snippet: string
     }
   }
@@ -102,9 +107,10 @@ When `background.js` receives `ANALYZE_TC`:
    - Automatically rolls over to the next provider if rate-limited (HTTP 429), errored, or slow.
    - Enforces strict structured JSON schema with exact snippet extraction.
    - Returns `engine: "Cerebras" | "Groq" | "OpenRouter" | "Gemini Flash"`.
-4. **10-Second Guaranteed Fallback & Dynamic Detection**:
+4. **10-Second Guaranteed Fallback & High-Confidence Dynamic Detection**:
    - If AI or ToS;DR APIs fail, throw an error, or time out after 10 seconds, `background.js` never fails silently.
-   - It dynamically evaluates `sourceText` via heuristic keyword matchers: categories where a risk clause is genuinely detected are returned with `present: true` and extracted snippets, while clean or absent categories are set to `present: false`. This ensures the UI question count is truly variable per website rather than static.
+   - It dynamically evaluates `sourceText` via strict high-confidence keyword matchers: requiring explicit high-risk phrases (e.g. "sell your personal information", "monetize your data") rather than generic words ("privacy", "cookies", "third-party", "cancel", "delete"). Categories with genuine risks are set to `present: true`, while clean or absent categories are set to `present: false`.
+   - **Zero-Risk Default for Documentation**: If terms text contains open-source or educational disclaimers (e.g. "open-source", "creative commons", "educational project"), all categories default to `present: false` unless explicit commercial monetization or mandatory arbitration clauses are detected, ensuring clean technical sites (e.g. MDN, Wikipedia) display 0 active questions.
 
 ---
 
