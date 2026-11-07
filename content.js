@@ -77,9 +77,42 @@
   };
 
   const HIGH_RISK_REGEX = /arbitration|third party|sell|broker|train|artificial intelligence|machine learning|renew|cancel|refund|retain|delete|waive|class action/i;
-  const TERMS_REGEX = /terms|privacy|tos|conditions|legal/i;
+  // URL/title match; `tos` only as a standalone token so "photos"/"autos" don't match
+  const TERMS_REGEX = /terms|privacy|(^|[^a-z])tos([^a-z]|$)|conditions|legal|eula/i;
+  // Anchor text match for terms/privacy links
+  const TERMS_LINK_REGEX = /terms of|terms &|terms and|privacy policy|user agreement|conditions of use|eula/i;
+  const SIGNUP_LINK_REGEX = /sign ?up|register|create (an )?account|join|get started|log ?in|sign ?in|checkout|check out|place order|subscribe/i;
+
+  // Risk weighting: HIGH = dealbreaker-class, others = medium/low
+  const CATEGORY_RISK = {
+    DATA_SALE: 'high',
+    WAIVE_RIGHTS: 'high',
+    AI_TRAINING: 'medium',
+    AUTO_RENEW: 'medium',
+    NO_DELETE: 'medium'
+  };
+
+  // Used to locate the source clause for each category in the terms text
+  const CLAUSE_PATTERNS = {
+    DATA_SALE: /\b(sell|sold|selling|data brokers?|third[- ]part(y|ies)|advertis\w*|share[sd]?\b[^.]{0,40}(personal|data))/gi,
+    AI_TRAINING: /\b(train(ing|ed)?|artificial intelligence|machine learning|AI|models?)\b/gi,
+    AUTO_RENEW: /\b(renew\w*|recurring|subscription|refund\w*|cancel\w*)\b/gi,
+    NO_DELETE: /\b(retain\w*|retention|delet\w*|backups?|archiv\w*|indefinite\w*)\b/gi,
+    WAIVE_RIGHTS: /\b(arbitration|class[- ]action|jury|waive[sd]?)\b/gi
+  };
+
+  // Fallback single-keyword text fragments when only a URL is known
+  const CLAUSE_FRAGMENT_KEYWORDS = {
+    DATA_SALE: 'third part',
+    AI_TRAINING: 'train',
+    AUTO_RENEW: 'renew',
+    NO_DELETE: 'retain',
+    WAIVE_RIGHTS: 'arbitration'
+  };
 
   // State
+  const clauseRefs = {};      // category -> { el } (on-page) or { snippet } (fetched text)
+  let clauseSourceUrl = null; // URL of the terms document when it is not the current page
   let analysisData = null;
   let sourceClauses = {};
   let isMinimized = false;
@@ -148,14 +181,8 @@
 
   function saveStorageData(profile, overrides) {
     return new Promise((resolve) => {
-      // Always sync to localStorage as well for standalone resiliency
-      try {
-        localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
-        localStorage.setItem(STORAGE_KEYS.SITE_OVERRIDES, JSON.stringify(overrides));
-      } catch (e) {
-        // localStorage might fail if quota exceeded
-      }
-
+      // Prefer extension storage. Never write to the host page's localStorage
+      // when it is available: page scripts could read or tamper with it.
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         try {
           chrome.storage.local.set({
@@ -168,6 +195,14 @@
         } catch (e) {
           console.warn('[TC-Guardian] chrome.storage.local save failed:', e);
         }
+      }
+
+      // Standalone fallback (no extension context, e.g. local test pages)
+      try {
+        localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
+        localStorage.setItem(STORAGE_KEYS.SITE_OVERRIDES, JSON.stringify(overrides));
+      } catch (e) {
+        // localStorage might fail if quota exceeded
       }
       resolve();
     });
@@ -189,9 +224,9 @@
           key !== STORAGE_KEYS.USER_PROFILE &&
           key !== STORAGE_KEYS.SITE_OVERRIDES &&
           (key.startsWith('tc_guardian_analysis') ||
-           key.startsWith('tc_analysis') ||
-           key.startsWith('tc_cache_') ||
-           key === 'tc_guardian_cache')
+            key.startsWith('tc_analysis') ||
+            key.startsWith('tc_cache_') ||
+            key === 'tc_guardian_cache')
         ) {
           localKeysToRemove.push(key);
         }
@@ -208,9 +243,9 @@
         if (
           key &&
           (key.startsWith('tc_guardian_analysis') ||
-           key.startsWith('tc_analysis') ||
-           key.startsWith('tc_cache_') ||
-           key === 'tc_guardian_cache')
+            key.startsWith('tc_analysis') ||
+            key.startsWith('tc_cache_') ||
+            key === 'tc_guardian_cache')
         ) {
           sessionKeysToRemove.push(key);
         }
@@ -229,9 +264,9 @@
               k !== STORAGE_KEYS.USER_PROFILE &&
               k !== STORAGE_KEYS.SITE_OVERRIDES &&
               (k.startsWith('tc_guardian_analysis') ||
-               k.startsWith('tc_analysis') ||
-               k.startsWith('tc_cache_') ||
-               k === 'tc_guardian_cache')
+                k.startsWith('tc_analysis') ||
+                k.startsWith('tc_cache_') ||
+                k === 'tc_guardian_cache')
           );
           if (chromeKeysToRemove.length > 0) {
             chrome.storage.local.remove(chromeKeysToRemove);
@@ -305,13 +340,23 @@
     return isNameMatch && textLen > 1000;
   }
 
+  function hasSignupIndicators() {
+    // Sign-up, login (password field) and checkout flows
+    if (document.querySelector('form, input[type="checkbox"], input[type="password"], button[type="submit"], input[type="submit"]')) {
+      return true;
+    }
+    return Array.from(document.querySelectorAll('a, button')).some(
+      (el) => SIGNUP_LINK_REGEX.test((el.textContent || '').trim())
+    );
+  }
+
   function findTermsLink() {
-    const links = Array.from(document.querySelectorAll('a'));
+    const links = Array.from(document.querySelectorAll('a[href]'));
     for (const a of links) {
       const text = (a.textContent || '').trim();
-      const href = a.getAttribute('href') || '';
-      if (TERMS_REGEX.test(text) || TERMS_REGEX.test(href)) {
-        return a.href;
+      const label = a.getAttribute('aria-label') || a.getAttribute('title') || '';
+      if (TERMS_LINK_REGEX.test(text) || TERMS_LINK_REGEX.test(label)) {
+        if (/^https?:/i.test(a.href)) return a.href;
       }
     }
     return null;
@@ -332,6 +377,100 @@
     } catch (err) {
       console.warn('[TC-Guardian] Pre-fetch failed for:', url, err);
       return null;
+    }
+  }
+
+  /**
+   * Clause location ("Read That Clause")
+   */
+  function scoreText(text, category) {
+    const matches = text.match(CLAUSE_PATTERNS[category]);
+    return matches ? matches.length : 0;
+  }
+
+  function buildClauseRefsFromDom() {
+    const host = document.getElementById('tc-guardian-host');
+    const sel = 'p, li, blockquote, td, dd, section, div, article';
+    const blocks = Array.from(document.querySelectorAll(sel))
+      .filter((el) => !(host && host.contains(el)))
+      .filter((el) => !el.querySelector(sel + ', h1, h2, h3'))
+      .map((el) => ({ el, text: (el.textContent || '').replace(/\s+/g, ' ').trim() }))
+      .filter((b) => b.text.length >= 40 && b.text.length <= 3000);
+
+    CATEGORIES.forEach((cat) => {
+      let best = null;
+      let bestScore = 0;
+      blocks.forEach((b) => {
+        const s = scoreText(b.text, cat);
+        if (s > bestScore) { best = b; bestScore = s; }
+      });
+      if (best) clauseRefs[cat] = { el: best.el };
+    });
+  }
+
+  function buildClauseRefsFromText(rawText) {
+    const paragraphs = rawText.split(/\n\s*\n/)
+      .map((p) => p.replace(/\s+/g, ' ').trim())
+      .filter((p) => p.length >= 40 && p.length <= 3000);
+
+    CATEGORIES.forEach((cat) => {
+      let best = null;
+      let bestScore = 0;
+      paragraphs.forEach((p) => {
+        const s = scoreText(p, cat);
+        if (s > bestScore) { best = p; bestScore = s; }
+      });
+      if (best) clauseRefs[cat] = { snippet: best };
+    });
+  }
+
+  function encodeFragmentPart(str) {
+    return encodeURIComponent(str).replace(/-/g, '%2D');
+  }
+
+  function buildTextFragment(cat) {
+    const ref = clauseRefs[cat];
+    if (ref && ref.snippet) {
+      const words = ref.snippet.split(' ');
+      if (words.length > 8) {
+        return `#:~:text=${encodeFragmentPart(words.slice(0, 4).join(' '))},${encodeFragmentPart(words.slice(-4).join(' '))}`;
+      }
+      return `#:~:text=${encodeFragmentPart(ref.snippet)}`;
+    }
+    return `#:~:text=${encodeFragmentPart(CLAUSE_FRAGMENT_KEYWORDS[cat])}`;
+  }
+
+  function flashElement(el) {
+    const prev = {
+      bg: el.style.backgroundColor,
+      tr: el.style.transition,
+      ol: el.style.outline
+    };
+    el.style.transition = 'background-color 0.3s ease';
+    el.style.backgroundColor = '#fde047';
+    el.style.outline = '2px solid #f59e0b';
+    setTimeout(() => {
+      el.style.backgroundColor = prev.bg;
+      el.style.outline = prev.ol;
+      setTimeout(() => { el.style.transition = prev.tr; }, 400);
+    }, 2500);
+  }
+
+  function canJumpToClause(cat) {
+    return Boolean(clauseRefs[cat] && clauseRefs[cat].el) || Boolean(clauseSourceUrl);
+  }
+
+  function jumpToClause(cat) {
+    const ref = clauseRefs[cat];
+    if (ref && ref.el && document.contains(ref.el)) {
+      ref.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      flashElement(ref.el);
+      return;
+    }
+    if (clauseSourceUrl) {
+      // Terms live on another page: open it with a native text-fragment highlight
+      const base = clauseSourceUrl.split('#')[0];
+      window.open(base + buildTextFragment(cat), '_blank', 'noopener');
     }
   }
 
@@ -433,12 +572,11 @@
   /**
    * Message Passing & Standalone Fallback
    */
-  async function requestAnalysis(filteredText, domain) {
-    const payload = {
-      action: 'ANALYZE_TC',
-      text: filteredText,
-      domain: domain
-    };
+  async function requestAnalysis(filteredText, domain, remoteUrl) {
+    // Cross-origin terms: background.js fetches (no page CORS) and analyzes in one step
+    const payload = remoteUrl
+      ? { action: 'FETCH_AND_ANALYZE_TC', url: remoteUrl, text: '', domain: domain }
+      : { action: 'ANALYZE_TC', text: filteredText, domain: domain };
 
     // Try chrome.runtime.sendMessage if available
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
@@ -460,11 +598,17 @@
         });
 
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Timeout waiting for background response')), 2500);
+          // Background may chain ToS;DR (2s) -> local AI -> Gemini; allow for all tiers.
+          setTimeout(() => reject(new Error('Timeout waiting for background response')), 20000);
         });
 
         const result = await Promise.race([sendPromise, timeoutPromise]);
         if (result && (result.data || result.categories || result.analysis)) {
+          if (isPlaceholderFallback(result)) {
+            // Backend gave up and flagged everything: that is not a real finding.
+            console.info('[TC-Guardian] Ignoring placeholder fallback payload; using local keyword check.');
+            return generateLocalMockResponse(filteredText || '');
+          }
           return normalizeAnalysisResult(result);
         }
       } catch (err) {
@@ -472,8 +616,8 @@
       }
     }
 
-    // Local Standalone Mock Fallback
-    return generateLocalMockResponse(filteredText);
+    // Local Standalone Mock Fallback (needs text; remote-only requests use a generic prompt)
+    return generateLocalMockResponse(filteredText || '');
   }
 
   /**
@@ -558,49 +702,55 @@
   }
 
   function generateLocalMockResponse(text) {
-    const hasDataSale = /sell|broker|third party/i.test(text);
-    const hasAiTraining = /train|artificial intelligence|machine learning/i.test(text);
-    const hasAutoRenew = /renew|cancel|refund/i.test(text);
-    const hasNoDelete = /retain|delete/i.test(text);
-    const hasWaiveRights = /arbitration|waive|class action/i.test(text);
+    // Stricter phrase-level patterns to limit false positives.
+    const hasDataSale = /\b(sell|sold|selling)\b[^.]{0,60}(personal|data|information)|data brokers?|sale of (your )?(personal )?(data|information)/i.test(text);
+    const hasAiTraining = /train(ing)?\b[^.]{0,60}\b(models?|artificial intelligence|machine learning|\bAI\b)|\b(artificial intelligence|machine learning)\b[^.]{0,60}\btrain/i.test(text);
+    const hasAutoRenew = /auto(matic(ally)?)?[- ]?renew|renews? automatically|recurring (billing|subscription|charge)/i.test(text);
+    const hasNoDelete = /(retain|keep|preserve|store)[^.]{0,80}(indefinite(ly)?|after (you )?(delet|terminat|clos))|backups?[^.]{0,60}(indefinite|retain)/i.test(text);
+    const hasWaiveRights = /binding arbitration|class[- ]action (waiver|waive)|waive[^.]{0,60}(jury|class action)/i.test(text);
 
+    const note = ' (Keyword match only; review the original terms to confirm.)';
     return {
       success: true,
       engine: 'Keyword Heuristic (Standalone Fallback)',
       categories: {
         DATA_SALE: {
           present: hasDataSale,
-          summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.',
-          shortSummary: 'Shares personal telemetry and data with third-party advertising brokers.',
-          snippet: hasDataSale ? 'We may share or sell collected browsing data with third-party advertising partners.' : ''
+          summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
         },
         AI_TRAINING: {
           present: hasAiTraining,
-          summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.',
-          shortSummary: 'Uses uploaded files, text, and user data to train AI and machine learning models.',
-          snippet: hasAiTraining ? 'User submissions and interactions may be used to train and refine AI and machine learning systems.' : ''
+          summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
         },
         AUTO_RENEW: {
           present: hasAutoRenew,
-          summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.',
-          shortSummary: 'Subscriptions renew automatically with non-refundable recurring billing terms.',
-          snippet: hasAutoRenew ? 'Subscription terms automatically renew each billing period and fees are strictly non-refundable.' : '',
-          cancellationGuide: hasAutoRenew ? getDefaultCancellationGuide(currentDomain) : null
+          summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.'
         },
         NO_DELETE: {
           present: hasNoDelete,
-          summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.',
-          shortSummary: 'Retains your activity logs and account data indefinitely even after deletion.',
-          snippet: hasNoDelete ? 'We retain personal records and database logs indefinitely following account deletion.' : ''
+          summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
         },
         WAIVE_RIGHTS: {
           present: hasWaiveRights,
-          summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.',
-          shortSummary: 'Mandates binding dispute arbitration and waives your rights to jury trials or class actions.',
-          snippet: hasWaiveRights ? 'Disputes are resolved exclusively by binding arbitration; class actions and jury trials are waived.' : ''
+          summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
         }
       }
     };
+  }
+
+  // background.js's "guaranteed fallback" marks all 5 categories present with one generic summary
+  function isPlaceholderFallback(raw) {
+    const src = raw.data || raw.categories || raw.analysis;
+    if (!src || Array.isArray(src)) return false;
+    const entries = CATEGORIES.map((c) => src[c]);
+    if (entries.some((e) => !e || !isActiveFlag(e.present))) return false;
+    const summaries = new Set(entries.map((e) => String(e.summary || '')));
+    return summaries.size === 1 && /^fallback detection/i.test([...summaries][0]);
+  }
+
+  // Strict flag check: LLMs sometimes return "false"/"no" strings, which Boolean() would treat as true
+  function isActiveFlag(v) {
+    return v === true || (typeof v === 'string' && /^(true|yes)$/i.test(v.trim()));
   }
 
   function normalizeAnalysisResult(raw) {
@@ -619,11 +769,8 @@
       if (catData) {
         const isPresent = Boolean(catData.present);
         normalized[catKey] = {
-          present: isPresent,
-          summary: catData.summary || CATEGORY_META[catKey].defaultSummary,
-          shortSummary: catData.shortSummary || catData.summary || CATEGORY_META[catKey].defaultSummary,
-          snippet: catData.snippet || '',
-          cancellationGuide: catData.cancellationGuide || (catKey === 'AUTO_RENEW' && isPresent ? getDefaultCancellationGuide(currentDomain) : null)
+          present: Boolean(catData.present),
+          summary: catData.summary || CATEGORY_META[catKey].defaultSummary
         };
       } else {
         normalized[catKey] = {
@@ -681,6 +828,7 @@
         z-index: 2147483647;
         width: 440px;
         max-width: calc(100vw - 40px);
+        height: auto; /* grows/shrinks with the number of flagged clauses */
         max-height: calc(100vh - 40px);
         background: #0f172a;
         border: 1px solid #334155;
@@ -814,7 +962,7 @@
       .tc-body {
         padding: 14px 18px;
         overflow-y: auto;
-        max-height: calc(100vh - 160px);
+        max-height: calc(100vh - 220px);
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -1234,42 +1382,6 @@
         margin-bottom: 8px;
       }
 
-      /* Recommendation Verdict Bar */
-      .tc-verdict-bar {
-        padding: 11px 18px;
-        font-size: 12.5px;
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        border-top: 1px solid #334155;
-        letter-spacing: 0.3px;
-        line-height: 1.35;
-        transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-      }
-
-      /* Strict Crimson Alert for High Risk */
-      .tc-verdict-bar.verdict-high-risk {
-        background: rgba(220, 38, 38, 0.22);
-        color: #fca5a5;
-        border-top: 1.5px solid #ef4444;
-      }
-
-      /* Softer Amber Warning for Medium/Low Risk */
-      .tc-verdict-bar.verdict-minor-risk {
-        background: rgba(217, 119, 6, 0.22);
-        color: #fde68a;
-        border-top: 1.5px solid #f59e0b;
-      }
-
-      /* Safe to Proceed */
-      .tc-verdict-bar.verdict-safe {
-        background: rgba(16, 185, 129, 0.2);
-        color: #86efac;
-        border-top: 1.5px solid #10b981;
-      }
-
       /* Footer */
       .tc-footer {
         padding: 10px 18px;
@@ -1282,6 +1394,67 @@
         color: #64748b;
       }
     `;
+  }
+
+  /**
+   * Dynamic, site-specific question content (no hardcoded per-category questions)
+   */
+  function firstSentence(text) {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    const m = clean.match(/^.+?[.!?](?=\s|$)/);
+    const sentence = (m ? m[0] : clean).replace(/[.!?]+$/, '');
+    return sentence.length > 180 ? sentence.slice(0, 177) + '...' : sentence;
+  }
+
+  // Wrap amounts, durations and percentages in <mark>. Input must already be HTML-escaped.
+  function highlightKeyTerms(escaped) {
+    return escaped.replace(
+      /(\$\s?\d[\d,.]*(?:\/\w+)?|\b\d+[- ]?(?:day|days|month|months|year|years|hour|hours)\b|\b\d+%)/gi,
+      '<mark>$1</mark>'
+    );
+  }
+
+  function getClauseQuote(cat, data) {
+    let quote = data.snippet || '';
+    if (!quote) {
+      const ref = clauseRefs[cat];
+      if (ref && ref.el) quote = (ref.el.textContent || '');
+      else if (ref && ref.snippet) quote = ref.snippet;
+    }
+    quote = quote.replace(/\s+/g, ' ').trim();
+    return quote.length > 240 ? quote.slice(0, 237) + '...' : quote;
+  }
+
+  function buildQuestionHtml(cat, data) {
+    const headline = data.question || `Do you accept this on ${currentDomain}: "${firstSentence(data.summary)}"?`;
+    const summary = String(data.summary || '').trim();
+    const showDetail = !data.question
+      ? summary.replace(/\s+/g, ' ').length > firstSentence(summary).length + 1
+      : summary.length > 0;
+    const quote = getClauseQuote(cat, data);
+
+    return `
+      <div class="tc-question">${highlightKeyTerms(escapeHtml(headline))}</div>
+      ${showDetail ? `<div class="tc-card-summary">${highlightKeyTerms(escapeHtml(summary))}</div>` : ''}
+      ${quote ? `<div class="tc-quote">From the terms: &ldquo;${escapeHtml(quote)}&rdquo;</div>` : ''}
+    `;
+  }
+
+  function buildRecommendationHtml(presentCategories, overrides) {
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const rejected = presentCategories.filter((c) => domainOverrides[c] === false);
+    const answered = presentCategories.filter((c) => Object.prototype.hasOwnProperty.call(domainOverrides, c));
+
+    if (rejected.some((c) => CATEGORY_RISK[c] === 'high')) {
+      return '<div class="tc-reco tc-reco-danger">🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.</div>';
+    }
+    if (rejected.length > 0) {
+      return '<div class="tc-reco tc-reco-warn">⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.</div>';
+    }
+    if (answered.length === presentCategories.length) {
+      return '<div class="tc-reco tc-reco-safe">✅ Safe to Proceed.</div>';
+    }
+    return '<div class="tc-reco tc-reco-pending">Answer each flagged clause to get a recommendation.</div>';
   }
 
   async function renderUI(analysis, profile, overrides) {
@@ -1362,66 +1535,12 @@
       return `
         <div class="tc-card ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
           <div class="tc-card-header">
-            <div class="tc-card-question">
-              <span class="tc-cat-icon">${meta.icon}</span>
-              <span>${escapeHtml(meta.question || meta.name)}</span>
-            </div>
-            <span class="tc-risk-pill ${riskBadgeClass}">${riskBadgeText}</span>
+            <span class="tc-card-title">${meta.icon} ${meta.name}</span>
           </div>
-
-          <div class="tc-card-summary">${escapeHtml(data.shortSummary || data.summary)}</div>
-
-          <div class="tc-card-statline">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="tc-stat-pill">${escapeHtml(statText)}</span>
-              ${overrideBadgeHtml}
-            </div>
-            <div style="display: flex; align-items: center; gap: 6px;">
-              ${catKey === 'AUTO_RENEW' ? `
-                <button class="tc-btn-how-to-cancel" data-cat="${catKey}" title="View cancellation guide">
-                  💡 How to Stop Auto-Pay
-                </button>
-              ` : ''}
-              <button class="tc-btn-view-clause" data-cat="${catKey}" title="View source clause on page">
-                📖 View Clause
-              </button>
-            </div>
+          <div>
+            <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
           </div>
-
-          <div class="tc-source-preview" id="source-preview-${catKey}" style="display: none;">
-            <div class="tc-preview-bullet-row">
-              <span class="tc-bullet-dot">•</span>
-              <div class="tc-bullet-content">
-                <span class="tc-bullet-label">Key Finding:</span>
-                <span class="tc-bullet-text">${escapeHtml(data.shortSummary || data.summary)}</span>
-              </div>
-            </div>
-            <details class="tc-raw-accordion">
-              <summary class="tc-accordion-toggle">
-                <span>📜 View Full Legal Snippet</span>
-                <span class="tc-accordion-chevron">▾</span>
-              </summary>
-              <div class="tc-source-preview-body">"${escapeHtml(sourceSnippet)}"</div>
-            </details>
-          </div>
-
-          ${catKey === 'AUTO_RENEW' && cancellationGuide ? `
-            <div class="tc-cancel-guide-panel" id="cancel-guide-${catKey}" style="display: none;">
-              <div class="tc-cancel-guide-header">
-                <span>🛑</span>
-                <span>How to Stop Auto-Pay (${escapeHtml(cancellationGuide.domain || currentDomain)})</span>
-              </div>
-              <ol class="tc-cancel-guide-steps">
-                ${cancellationGuide.steps.map(s => `<li class="tc-cancel-step">${escapeHtml(s)}</li>`).join('')}
-              </ol>
-              ${cancellationGuide.url ? `
-                <a class="tc-cancel-guide-link" href="${escapeHtml(cancellationGuide.url)}" target="_blank" rel="noopener noreferrer">
-                  🔗 Direct Subscription Settings &rarr;
-                </a>
-              ` : ''}
-            </div>
-          ` : ''}
-
+          <div class="tc-card-summary">${escapeHtml(data.summary)}</div>
           <div class="tc-card-actions">
             <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
               ${isCurrentYes ? '✓ ' : ''}[ Yes ]
@@ -1429,6 +1548,7 @@
             <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no" title="Reject this clause">
               ${isCurrentNo ? '✕ ' : ''}[ No ]
             </button>
+            ${canJumpToClause(catKey) ? `<button class="tc-btn tc-btn-view tc-view-btn" data-cat="${catKey}" title="Jump to this clause in the terms">📖 View Clause</button>` : ''}
           </div>
         </div>
       `;
@@ -1441,40 +1561,6 @@
         <div>This agreement did not trigger any of the monitored high-risk categories.</div>
       </div>
     `;
-
-    // Evaluate Recommendation Bar with Risk Weighting:
-    // 1. DATA_SALE & WAIVE_RIGHTS are HIGH risk (Dealbreakers) -> Crimson alert
-    // 2. AI_TRAINING, AUTO_RENEW, NO_DELETE are MEDIUM/LOW risk -> Amber warning
-    // 3. If all accepted -> Safe to proceed
-    const isCategoryRejected = (catKey) => {
-      if (domainOverrides[catKey] === false) return true;
-      if (domainOverrides[catKey] === true) return false;
-      const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
-      const noCount = Number(catStats.no) || 0;
-      const totalVotes = Number(catStats.yes || 0) + noCount;
-      return totalVotes > 0 && noCount >= 2 && (noCount / totalVotes) >= 0.60;
-    };
-
-    const hasHighRiskRejection = presentCategories.some(
-      (catKey) => HIGH_RISK_CATEGORIES.includes(catKey) && isCategoryRejected(catKey)
-    );
-    const hasMinorRiskRejection = presentCategories.some(
-      (catKey) => MEDIUM_LOW_RISK_CATEGORIES.includes(catKey) && isCategoryRejected(catKey)
-    );
-
-    let verdictClass = 'verdict-safe';
-    let verdictText = '✅ Safe to Proceed.';
-
-    if (presentCategories.length === 0) {
-      verdictClass = 'verdict-safe';
-      verdictText = '✅ Safe to Proceed — Zero Risk Clauses Detected';
-    } else if (hasHighRiskRejection) {
-      verdictClass = 'verdict-high-risk';
-      verdictText = '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.';
-    } else if (hasMinorRiskRejection) {
-      verdictClass = 'verdict-minor-risk';
-      verdictText = '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.';
-    }
 
     root.innerHTML = `
       <style>${getCSS()}</style>
@@ -1493,12 +1579,7 @@
 
         <!-- Cards List -->
         <div class="tc-body">
-          ${presentCategories.length > 0 ? categoryCardsHtml : emptyHtml}
-        </div>
-
-        <!-- Risk-Weighted Proceed / Stop Recommendation Bar -->
-        <div class="tc-verdict-bar ${verdictClass}">
-          <span>${verdictText}</span>
+          ${categoryCardsHtml}
         </div>
 
         <!-- Footer -->
@@ -1561,8 +1642,13 @@
       });
     });
 
+    // View Clause buttons
+    root.querySelectorAll('.tc-view-btn').forEach((btn) => {
+      btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
+    });
+
     // Accept / Reject Buttons
-    root.querySelectorAll('.tc-btn').forEach((btn) => {
+    root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         const target = e.currentTarget;
         const catKey = target.getAttribute('data-cat');
@@ -1612,38 +1698,51 @@
     clearCachedAnalysis();
 
     let rawText = '';
+    let remoteUrl = null;
 
     if (isTermsPage()) {
       // Analyze current page text
       rawText = (document.body && (document.body.innerText || document.body.textContent)) || '';
-    } else {
-      // Look for a link to terms
+      buildClauseRefsFromDom();
+    } else if (hasSignupIndicators()) {
+      // Sign-up context: silently pre-fetch the linked terms
       const termsUrl = findTermsLink();
       if (termsUrl) {
-        rawText = await fetchTermsUrl(termsUrl);
+        clauseSourceUrl = termsUrl;
+        if (new URL(termsUrl).origin === window.location.origin) {
+          rawText = await fetchTermsUrl(termsUrl);
+          if (rawText) buildClauseRefsFromText(rawText);
+        } else {
+          remoteUrl = termsUrl; // CORS-blocked here; let background.js fetch it
+        }
       }
     }
 
-    if (!rawText || rawText.trim().length === 0) {
-      // No terms page or terms link found on this page
-      return;
-    }
-
-    const filtered = filterHighRiskText(rawText);
-    if (!filtered || filtered.trim().length === 0) {
-      return;
+    let filtered = '';
+    if (!remoteUrl) {
+      if (!rawText || rawText.trim().length === 0) {
+        // No terms page or terms link found on this page
+        return;
+      }
+      filtered = filterHighRiskText(rawText);
+      if (!filtered || filtered.trim().length === 0) {
+        return;
+      }
     }
 
     // Extract and map source paragraph excerpts for deep-linking
     sourceClauses = extractSourceClauses(rawText);
 
     // Run analysis via message passing or standalone fallback
-    analysisData = await requestAnalysis(filtered, currentDomain);
+    analysisData = await requestAnalysis(filtered, currentDomain, remoteUrl);
 
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
 
-    // Render Shadow DOM UI
+    // Only surface the pop-up when at least one red flag is active
+    const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present === true);
+    if (!hasFlags) return;
+
     renderUI(analysisData, profile, overrides);
   }
 
