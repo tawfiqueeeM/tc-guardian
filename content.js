@@ -15,7 +15,8 @@
   // Constants
   const STORAGE_KEYS = {
     USER_PROFILE: 'tc_guardian_userProfile',
-    SITE_OVERRIDES: 'tc_guardian_siteOverrides'
+    SITE_OVERRIDES: 'tc_guardian_siteOverrides',
+    ANALYSIS_CACHE: 'tc_guardian_analysis_cache'
   };
 
   const CATEGORIES = [
@@ -26,35 +27,51 @@
     'WAIVE_RIGHTS'
   ];
 
+  const HIGH_RISK_CATEGORIES = ['DATA_SALE', 'WAIVE_RIGHTS'];
+  const MEDIUM_LOW_RISK_CATEGORIES = ['AI_TRAINING', 'AUTO_RENEW', 'NO_DELETE'];
+
+  const CATEGORY_MATCHERS = {
+    DATA_SALE: /sell|broker|third party|commercialize|monetiz/i,
+    AI_TRAINING: /train|artificial intelligence|machine learning|neural network|large language model/i,
+    AUTO_RENEW: /renew|subscription|\$99|recurring|refund|cancel/i,
+    NO_DELETE: /retain|delete|indefinitely|archive|preserv/i,
+    WAIVE_RIGHTS: /arbitration|waive|class action|jury trial|dispute/i
+  };
+
   const CATEGORY_META = {
     DATA_SALE: {
       name: 'Data Sale & Third-Party Sharing',
       question: 'Do you want to allow Data Sale / Third-Party Sharing?',
       icon: '📊',
+      riskLevel: 'HIGH',
       defaultSummary: 'Sells or shares your personal identity, browsing telemetry, and behavior with third-party ad brokers and marketing syndicates.'
     },
     AI_TRAINING: {
       name: 'AI Model Training',
       question: 'Do you want to allow AI Model Training on Your Data?',
       icon: '🤖',
+      riskLevel: 'MEDIUM',
       defaultSummary: 'Uses your uploaded content, documents, prompts, and assets to train generative AI and machine learning models without opt-out.'
     },
     AUTO_RENEW: {
       name: 'Auto-Renewal & Recurring Billing',
       question: 'Do you accept Auto-Renewal / Non-Refundable Billing?',
       icon: '💳',
+      riskLevel: 'MEDIUM',
       defaultSummary: 'Automatically renews subscriptions with recurring billing and enforces strict non-refundable terms upon renewal.'
     },
     NO_DELETE: {
       name: 'Indefinite Data Retention',
       question: 'Do you allow Indefinite Retention After Account Deletion?',
       icon: '🗄️',
+      riskLevel: 'LOW',
       defaultSummary: 'Retains your personal records, database logs, and telemetry indefinitely even after you request account deletion.'
     },
     WAIVE_RIGHTS: {
       name: 'Mandatory Arbitration & Class Action Waiver',
       question: 'Do you agree to Mandatory Arbitration & Rights Waiver?',
       icon: '⚖️',
+      riskLevel: 'HIGH',
       defaultSummary: 'Forces dispute resolution via private binding arbitration and strips your legal rights to jury trial or class action participation.'
     }
   };
@@ -64,6 +81,7 @@
 
   // State
   let analysisData = null;
+  let sourceClauses = {};
   let isMinimized = false;
   let shadowRoot = null;
   const currentDomain = (window.location.hostname || 'localhost').replace(/^www\./, '');
@@ -153,6 +171,76 @@
       }
       resolve();
     });
+  }
+
+  /**
+   * Cache Invalidation:
+   * Clears cached analysis results on page load so new sites or navigations
+   * trigger fresh, site-specific API evaluations instead of holding stale state.
+   * Explicitly preserves user preference history and per-site overrides.
+   */
+  function clearCachedAnalysis() {
+    try {
+      const localKeysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (
+          key &&
+          key !== STORAGE_KEYS.USER_PROFILE &&
+          key !== STORAGE_KEYS.SITE_OVERRIDES &&
+          (key.startsWith('tc_guardian_analysis') ||
+           key.startsWith('tc_analysis') ||
+           key.startsWith('tc_cache_') ||
+           key === 'tc_guardian_cache')
+        ) {
+          localKeysToRemove.push(key);
+        }
+      }
+      localKeysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (e) {
+      // Ignore localStorage errors
+    }
+
+    try {
+      const sessionKeysToRemove = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (
+          key &&
+          (key.startsWith('tc_guardian_analysis') ||
+           key.startsWith('tc_analysis') ||
+           key.startsWith('tc_cache_') ||
+           key === 'tc_guardian_cache')
+        ) {
+          sessionKeysToRemove.push(key);
+        }
+      }
+      sessionKeysToRemove.forEach((k) => sessionStorage.removeItem(k));
+    } catch (e) {
+      // Ignore sessionStorage errors
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        chrome.storage.local.get(null, (items) => {
+          if (!items) return;
+          const chromeKeysToRemove = Object.keys(items).filter(
+            (k) =>
+              k !== STORAGE_KEYS.USER_PROFILE &&
+              k !== STORAGE_KEYS.SITE_OVERRIDES &&
+              (k.startsWith('tc_guardian_analysis') ||
+               k.startsWith('tc_analysis') ||
+               k.startsWith('tc_cache_') ||
+               k === 'tc_guardian_cache')
+          );
+          if (chromeKeysToRemove.length > 0) {
+            chrome.storage.local.remove(chromeKeysToRemove);
+          }
+        });
+      } catch (e) {
+        // Ignore chrome.storage errors
+      }
+    }
   }
 
   /**
@@ -280,6 +368,69 @@
   }
 
   /**
+   * Source Text Reference Extraction & DOM Highlighting
+   */
+  function extractSourceClauses(text) {
+    const map = {};
+    if (!text) return map;
+    const blocks = text.split(/\n\s*\n|\r\n\s*\r\n/);
+
+    CATEGORIES.forEach((catKey) => {
+      const matcher = CATEGORY_MATCHERS[catKey];
+      if (!matcher) return;
+      for (const b of blocks) {
+        const clean = b.replace(/\s+/g, ' ').trim();
+        if (clean.length >= 25 && matcher.test(clean)) {
+          map[catKey] = clean;
+          break;
+        }
+      }
+    });
+
+    return map;
+  }
+
+  function findDomElementForCategory(catKey) {
+    const matcher = CATEGORY_MATCHERS[catKey];
+    if (!matcher) return null;
+
+    // Search document for matching paragraph or container (excluding our Shadow DOM host)
+    const elements = Array.from(document.querySelectorAll('.flag-clause, p, li, blockquote, div'));
+    for (const el of elements) {
+      if (el.closest('#tc-guardian-host')) continue;
+      const txt = el.innerText || el.textContent || '';
+      if (txt.length >= 30 && txt.length <= 1600 && matcher.test(txt)) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function flashHighlightElement(element) {
+    if (!element) return;
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    const prevBg = element.style.backgroundColor;
+    const prevShadow = element.style.boxShadow;
+    const prevRadius = element.style.borderRadius;
+    const prevTransition = element.style.transition;
+
+    element.style.transition = 'background-color 0.3s ease, box-shadow 0.3s ease';
+    element.style.backgroundColor = 'rgba(250, 204, 21, 0.45)'; // Flash yellow highlight
+    element.style.boxShadow = '0 0 0 5px rgba(250, 204, 21, 0.7)';
+    element.style.borderRadius = '6px';
+
+    setTimeout(() => {
+      element.style.backgroundColor = prevBg;
+      element.style.boxShadow = prevShadow;
+      element.style.borderRadius = prevRadius;
+      setTimeout(() => {
+        element.style.transition = prevTransition;
+      }, 350);
+    }, 2200);
+  }
+
+  /**
    * Message Passing & Standalone Fallback
    */
   async function requestAnalysis(filteredText, domain) {
@@ -338,23 +489,33 @@
       categories: {
         DATA_SALE: {
           present: hasDataSale,
-          summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
+          summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.',
+          shortSummary: 'Shares personal telemetry and data with third-party advertising brokers.',
+          snippet: hasDataSale ? 'We may share or sell collected browsing data with third-party advertising partners.' : ''
         },
         AI_TRAINING: {
           present: hasAiTraining,
-          summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
+          summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.',
+          shortSummary: 'Uses uploaded files, text, and user data to train AI and machine learning models.',
+          snippet: hasAiTraining ? 'User submissions and interactions may be used to train and refine AI and machine learning systems.' : ''
         },
         AUTO_RENEW: {
           present: hasAutoRenew,
-          summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.'
+          summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.',
+          shortSummary: 'Subscriptions renew automatically with non-refundable recurring billing terms.',
+          snippet: hasAutoRenew ? 'Subscription terms automatically renew each billing period and fees are strictly non-refundable.' : ''
         },
         NO_DELETE: {
           present: hasNoDelete,
-          summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
+          summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.',
+          shortSummary: 'Retains your activity logs and account data indefinitely even after deletion.',
+          snippet: hasNoDelete ? 'We retain personal records and database logs indefinitely following account deletion.' : ''
         },
         WAIVE_RIGHTS: {
           present: hasWaiveRights,
-          summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
+          summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.',
+          shortSummary: 'Mandates binding dispute arbitration and waives your rights to jury trials or class actions.',
+          snippet: hasWaiveRights ? 'Disputes are resolved exclusively by binding arbitration; class actions and jury trials are waived.' : ''
         }
       }
     };
@@ -376,12 +537,16 @@
       if (catData) {
         normalized[catKey] = {
           present: Boolean(catData.present),
-          summary: catData.summary || CATEGORY_META[catKey].defaultSummary
+          summary: catData.summary || CATEGORY_META[catKey].defaultSummary,
+          shortSummary: catData.shortSummary || catData.summary || CATEGORY_META[catKey].defaultSummary,
+          snippet: catData.snippet || ''
         };
       } else {
         normalized[catKey] = {
           present: false,
-          summary: CATEGORY_META[catKey].defaultSummary
+          summary: CATEGORY_META[catKey].defaultSummary,
+          shortSummary: '',
+          snippet: ''
         };
       }
     });
@@ -598,6 +763,10 @@
       }
 
       .tc-card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
         margin-bottom: 8px;
       }
 
@@ -615,6 +784,34 @@
         font-size: 16px;
         line-height: 1.2;
         flex-shrink: 0;
+      }
+
+      .tc-risk-pill {
+        font-size: 9.5px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        flex-shrink: 0;
+      }
+
+      .tc-risk-pill.risk-high {
+        background: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+      }
+
+      .tc-risk-pill.risk-med {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fde68a;
+        border: 1px solid rgba(245, 158, 11, 0.35);
+      }
+
+      .tc-risk-pill.risk-low {
+        background: rgba(59, 130, 246, 0.2);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.35);
       }
 
       .tc-card-summary {
@@ -648,6 +845,130 @@
         border-radius: 4px;
         border: 1px solid rgba(56, 189, 248, 0.25);
         font-family: monospace;
+      }
+
+      .tc-btn-view-clause {
+        background: rgba(59, 130, 246, 0.15);
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        color: #93c5fd;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.15s ease;
+      }
+
+      .tc-btn-view-clause:hover {
+        background: rgba(59, 130, 246, 0.3);
+        color: #ffffff;
+        border-color: #60a5fa;
+      }
+
+      .tc-source-preview {
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        font-size: 12px;
+        animation: tc-fade-in 0.2s ease;
+      }
+
+      @keyframes tc-fade-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .tc-preview-bullet-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        color: #f1f5f9;
+        font-size: 12px;
+        line-height: 1.45;
+        margin-bottom: 8px;
+      }
+
+      .tc-bullet-dot {
+        color: #38bdf8;
+        font-size: 16px;
+        line-height: 1.1;
+        user-select: none;
+      }
+
+      .tc-bullet-content {
+        flex: 1;
+      }
+
+      .tc-bullet-label {
+        font-weight: 700;
+        color: #93c5fd;
+        margin-right: 4px;
+      }
+
+      .tc-bullet-text {
+        color: #e2e8f0;
+      }
+
+      /* Raw Legal Snippet Accordion */
+      .tc-raw-accordion {
+        margin-top: 6px;
+        border-top: 1px solid #1e293b;
+        padding-top: 6px;
+      }
+
+      .tc-accordion-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        color: #94a3b8;
+        padding: 4px 2px;
+        user-select: none;
+        list-style: none;
+        transition: color 0.15s ease;
+      }
+
+      .tc-accordion-toggle::-webkit-details-marker {
+        display: none;
+      }
+
+      .tc-accordion-toggle:hover {
+        color: #e2e8f0;
+      }
+
+      .tc-accordion-chevron {
+        font-size: 11px;
+        transition: transform 0.2s ease;
+        display: inline-block;
+      }
+
+      .tc-raw-accordion[open] .tc-accordion-chevron {
+        transform: rotate(180deg);
+      }
+
+      .tc-raw-accordion[open] .tc-accordion-toggle {
+        color: #38bdf8;
+        margin-bottom: 6px;
+      }
+
+      .tc-source-preview-body {
+        color: #cbd5e1;
+        font-style: italic;
+        font-size: 11.5px;
+        line-height: 1.45;
+        background: rgba(15, 23, 42, 0.7);
+        padding: 8px 10px;
+        border-radius: 6px;
+        border-left: 3px solid #38bdf8;
+        word-break: break-word;
+        white-space: pre-wrap;
       }
 
       .tc-override-pill {
@@ -753,7 +1074,7 @@
 
       /* Recommendation Verdict Bar */
       .tc-verdict-bar {
-        padding: 10px 18px;
+        padding: 11px 18px;
         font-size: 12.5px;
         font-weight: 700;
         display: flex;
@@ -762,19 +1083,29 @@
         text-align: center;
         border-top: 1px solid #334155;
         letter-spacing: 0.3px;
+        line-height: 1.35;
         transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
       }
 
-      .tc-verdict-bar.verdict-stop {
-        background: rgba(239, 68, 68, 0.18);
+      /* Strict Crimson Alert for High Risk */
+      .tc-verdict-bar.verdict-high-risk {
+        background: rgba(220, 38, 38, 0.22);
         color: #fca5a5;
-        border-top-color: rgba(239, 68, 68, 0.4);
+        border-top: 1.5px solid #ef4444;
       }
 
-      .tc-verdict-bar.verdict-proceed {
-        background: rgba(16, 185, 129, 0.18);
+      /* Softer Amber Warning for Medium/Low Risk */
+      .tc-verdict-bar.verdict-minor-risk {
+        background: rgba(217, 119, 6, 0.22);
+        color: #fde68a;
+        border-top: 1.5px solid #f59e0b;
+      }
+
+      /* Safe to Proceed */
+      .tc-verdict-bar.verdict-safe {
+        background: rgba(16, 185, 129, 0.2);
         color: #86efac;
-        border-top-color: rgba(16, 185, 129, 0.4);
+        border-top: 1.5px solid #10b981;
       }
 
       /* Footer */
@@ -798,7 +1129,7 @@
       // Count dealbreakers
       let dealbreakerCount = 0;
       CATEGORIES.forEach((catKey) => {
-        if (analysis.categories[catKey] && analysis.categories[catKey].present) {
+        if (analysis && analysis.categories && analysis.categories[catKey] && analysis.categories[catKey].present === true) {
           const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
           const no = Number(catStats.no) || 0;
           const total = Number(catStats.yes || 0) + no;
@@ -822,9 +1153,9 @@
       return;
     }
 
-    // Filter categories where present === true
+    // Conditional Filtering: Only create and render cards where present === true
     const presentCategories = CATEGORIES.filter(
-      (catKey) => analysis.categories[catKey] && analysis.categories[catKey].present
+      (catKey) => Boolean(analysis && analysis.categories && analysis.categories[catKey] && analysis.categories[catKey].present === true)
     );
 
     const domainOverrides = (overrides && overrides[currentDomain]) || {};
@@ -860,6 +1191,10 @@
       }
 
       const isDealbreaker = !hasOverride && total > 0 && no >= 2 && (no / total) >= 0.60;
+      const sourceSnippet = (sourceClauses && sourceClauses[catKey]) || data.snippet || data.summary || 'Clause text detected in agreement terms.';
+
+      const riskBadgeClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
+      const riskBadgeText = meta.riskLevel === 'HIGH' ? 'HIGH RISK' : (meta.riskLevel === 'LOW' ? 'LOW RISK' : 'MEDIUM RISK');
 
       return `
         <div class="tc-card ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
@@ -868,13 +1203,36 @@
               <span class="tc-cat-icon">${meta.icon}</span>
               <span>${escapeHtml(meta.question || meta.name)}</span>
             </div>
+            <span class="tc-risk-pill ${riskBadgeClass}">${riskBadgeText}</span>
           </div>
 
-          <div class="tc-card-summary">${escapeHtml(data.summary)}</div>
+          <div class="tc-card-summary">${escapeHtml(data.shortSummary || data.summary)}</div>
 
           <div class="tc-card-statline">
-            <span class="tc-stat-pill">${escapeHtml(statText)}</span>
-            ${overrideBadgeHtml}
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="tc-stat-pill">${escapeHtml(statText)}</span>
+              ${overrideBadgeHtml}
+            </div>
+            <button class="tc-btn-view-clause" data-cat="${catKey}" title="View source clause on page">
+              📖 View Clause
+            </button>
+          </div>
+
+          <div class="tc-source-preview" id="source-preview-${catKey}" style="display: none;">
+            <div class="tc-preview-bullet-row">
+              <span class="tc-bullet-dot">•</span>
+              <div class="tc-bullet-content">
+                <span class="tc-bullet-label">Key Finding:</span>
+                <span class="tc-bullet-text">${escapeHtml(data.shortSummary || data.summary)}</span>
+              </div>
+            </div>
+            <details class="tc-raw-accordion">
+              <summary class="tc-accordion-toggle">
+                <span>📜 View Full Legal Snippet</span>
+                <span class="tc-accordion-chevron">▾</span>
+              </summary>
+              <div class="tc-source-preview-body">"${escapeHtml(sourceSnippet)}"</div>
+            </details>
           </div>
 
           <div class="tc-card-actions">
@@ -897,23 +1255,39 @@
       </div>
     `;
 
-    // Evaluate Recommendation Bar:
-    // 1. If user selects "No" on any high-risk category, or has an un-overridden historical dealbreaker -> Stop
-    // 2. If all selected categories are accepted -> Safe to Proceed
-    const hasExplicitNo = presentCategories.some((catKey) => domainOverrides[catKey] === false);
-    const hasHistoricalReject = presentCategories.some((catKey) => {
+    // Evaluate Recommendation Bar with Risk Weighting:
+    // 1. DATA_SALE & WAIVE_RIGHTS are HIGH risk (Dealbreakers) -> Crimson alert
+    // 2. AI_TRAINING, AUTO_RENEW, NO_DELETE are MEDIUM/LOW risk -> Amber warning
+    // 3. If all accepted -> Safe to proceed
+    const isCategoryRejected = (catKey) => {
+      if (domainOverrides[catKey] === false) return true;
       if (domainOverrides[catKey] === true) return false;
       const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
       const noCount = Number(catStats.no) || 0;
       const totalVotes = Number(catStats.yes || 0) + noCount;
       return totalVotes > 0 && noCount >= 2 && (noCount / totalVotes) >= 0.60;
-    });
+    };
 
-    const isStop = hasExplicitNo || hasHistoricalReject;
-    const verdictClass = isStop ? 'verdict-stop' : 'verdict-proceed';
-    const verdictText = isStop
-      ? '🛑 Recommendation: Stop / Unacceptable Terms Detected'
-      : '✅ Recommendation: Safe to Proceed';
+    const hasHighRiskRejection = presentCategories.some(
+      (catKey) => HIGH_RISK_CATEGORIES.includes(catKey) && isCategoryRejected(catKey)
+    );
+    const hasMinorRiskRejection = presentCategories.some(
+      (catKey) => MEDIUM_LOW_RISK_CATEGORIES.includes(catKey) && isCategoryRejected(catKey)
+    );
+
+    let verdictClass = 'verdict-safe';
+    let verdictText = '✅ Safe to Proceed.';
+
+    if (presentCategories.length === 0) {
+      verdictClass = 'verdict-safe';
+      verdictText = '✅ Safe to Proceed — Zero Risk Clauses Detected';
+    } else if (hasHighRiskRejection) {
+      verdictClass = 'verdict-high-risk';
+      verdictText = '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.';
+    } else if (hasMinorRiskRejection) {
+      verdictClass = 'verdict-minor-risk';
+      verdictText = '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.';
+    }
 
     root.innerHTML = `
       <style>${getCSS()}</style>
@@ -935,7 +1309,7 @@
           ${presentCategories.length > 0 ? categoryCardsHtml : emptyHtml}
         </div>
 
-        <!-- Proceed / Stop Recommendation Bar -->
+        <!-- Risk-Weighted Proceed / Stop Recommendation Bar -->
         <div class="tc-verdict-bar ${verdictClass}">
           <span>${verdictText}</span>
         </div>
@@ -957,6 +1331,30 @@
     root.getElementById('tc-close-btn').addEventListener('click', () => {
       isMinimized = true;
       renderUI(analysis, profile, overrides);
+    });
+
+    // View Clause Jump & Highlight Listeners
+    root.querySelectorAll('.tc-btn-view-clause').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const catKey = e.currentTarget.getAttribute('data-cat');
+        const el = findDomElementForCategory(catKey);
+        if (el) {
+          flashHighlightElement(el);
+        } else {
+          // If on a sign-up page where terms were pre-fetched, highlight the terms link
+          const link = document.querySelector('a#terms-link') || Array.from(document.querySelectorAll('a')).find(a => TERMS_REGEX.test(a.textContent || ''));
+          if (link) {
+            flashHighlightElement(link);
+          }
+        }
+
+        // Toggle the inline source preview accordion on the card
+        const preview = root.getElementById(`source-preview-${catKey}`);
+        if (preview) {
+          const isHidden = (preview.style.display === 'none' || !preview.style.display);
+          preview.style.display = isHidden ? 'block' : 'none';
+        }
+      });
     });
 
     // Accept / Reject Buttons
@@ -1006,6 +1404,9 @@
    * Main Controller Initialization
    */
   async function init() {
+    // Cache Invalidation: Clear local storage/cached analysis results on page load
+    clearCachedAnalysis();
+
     let rawText = '';
 
     if (isTermsPage()) {
@@ -1028,6 +1429,9 @@
     if (!filtered || filtered.trim().length === 0) {
       return;
     }
+
+    // Extract and map source paragraph excerpts for deep-linking
+    sourceClauses = extractSourceClauses(rawText);
 
     // Run analysis via message passing or standalone fallback
     analysisData = await requestAnalysis(filtered, currentDomain);
