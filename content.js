@@ -1886,7 +1886,6 @@
         border: 1px solid #fecaca;
         color: #991b1b;
       }
-      }
 
       .tc-reco-warn {
         background-color: #fffbeb !important;
@@ -2476,18 +2475,9 @@
 
     const alwaysShowWidget = await getAlwaysShowWidgetSetting();
 
-    // If total number of unacknowledged active risks is 0, check alwaysShowWidget override
+    // If total number of unacknowledged active risks is 0, do NOT return early or build an empty DOM.
+    // Default to minimized bubble unless manually expanded
     if (unacknowledgedActiveCategories.length === 0) {
-      if (!alwaysShowWidget && !userManuallyExpanded) {
-        if (shadowRoot) {
-          shadowRoot.innerHTML = '';
-        }
-        const host = document.getElementById('tc-guardian-host');
-        if (host) {
-          host.style.display = 'none';
-        }
-        return;
-      }
       if (!userManuallyExpanded && (isMinimized === null || isMinimized === undefined)) {
         isMinimized = true;
       }
@@ -2527,12 +2517,12 @@
       root.innerHTML = `
         <style>${getCSS()}</style>
         <div class="tc-widget-container">
-          <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
+          <div class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn" role="button" tabindex="0">
             <img class="tc-bubble-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
             <span>T&C Guardian</span>
             ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
-            <div class="tc-bubble-close">×</div>
-          </button>
+            <span class="tc-bubble-close" title="Dismiss" role="button" tabindex="0">&times;</span>
+          </div>
         </div>
       `;
 
@@ -2541,6 +2531,9 @@
       const bubble = shadow.querySelector('.tc-bubble');
       if (bubble) {
         bubble.addEventListener('click', (e) => {
+          if (e.target && e.target.closest && e.target.closest('.tc-bubble-close')) {
+            return;
+          }
           e.stopPropagation();
           e.preventDefault();
 
@@ -2598,15 +2591,15 @@
 
     // Determine which risk categories to display:
     // If there are unacknowledged active risks, display those.
-    // If all active risks were acknowledged (or none left), but the user expanded the widget,
-    // display all present risk categories (or all monitored categories if alwaysShow or manually expanded),
-    // so the question toggles (Yes/No), original clauses, and guides are fully accessible!
+    // If the page is clean (zero unacknowledged risks) or all risks were acknowledged,
+    // display all present risk categories (or all monitored categories),
+    // ensuring the question window, toggles (Yes/No), and guides are always generated!
     let categoriesToDisplay = [...unacknowledgedActiveCategories];
     if (categoriesToDisplay.length === 0) {
       const presentCategories = CATEGORIES.filter((catKey) => analysis?.categories?.[catKey]?.present === true);
       if (presentCategories.length > 0) {
         categoriesToDisplay = presentCategories;
-      } else if (alwaysShowWidget || userManuallyExpanded) {
+      } else {
         categoriesToDisplay = [...CATEGORIES];
       }
     }
@@ -2729,19 +2722,30 @@
     }).join('');
 
     const hasAnyRisks = CATEGORIES.some((c) => analysis?.categories?.[c]?.present === true);
-    const emptyHtml = hasAnyRisks ? `
-      <div class="tc-empty">
-        <div class="tc-empty-icon">✓</div>
-        <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">All Flagged Clauses Answered</div>
-        <div style="color: #64748b;">You have saved choices for all risks on this site.</div>
-      </div>
-    ` : `
-      <div class="tc-empty">
-        <div class="tc-empty-icon">🎉</div>
-        <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">No Critical Red Flags Found</div>
-        <div style="color: #64748b;">This agreement did not trigger any of the monitored high-risk categories.</div>
-      </div>
-    `;
+    let cleanStatusBanner = '';
+    if (unacknowledgedActiveCategories.length === 0) {
+      cleanStatusBanner = hasAnyRisks ? `
+        <div class="tc-card" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #16a34a; padding: 12px 14px; border-radius: 12px; margin-bottom: 12px;">
+          <div style="font-weight: 700; color: #166534; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+            <span>✓</span>
+            <span>All Flagged Clauses Answered</span>
+          </div>
+          <div style="color: #15803d; font-size: 12px; margin-top: 4px;">
+            You have saved choices for all detected risks on this site. You can review or adjust your decisions below.
+          </div>
+        </div>
+      ` : `
+        <div class="tc-card" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #16a34a; padding: 12px 14px; border-radius: 12px; margin-bottom: 12px;">
+          <div style="font-weight: 700; color: #166534; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+            <span>🎉</span>
+            <span>Clean Page — No Predatory Terms Detected</span>
+          </div>
+          <div style="color: #15803d; font-size: 12px; margin-top: 4px;">
+            This agreement is clean of flagged high-risk clauses. You can set your preferences for monitored categories below.
+          </div>
+        </div>
+      `;
+    }
 
     root.innerHTML = `
       <style>${getCSS()}</style>
@@ -2778,7 +2782,8 @@
 
           <!-- Cards List -->
           <div class="tc-body">
-            ${categoryCardsHtml || emptyHtml}
+            ${cleanStatusBanner}
+            ${categoryCardsHtml}
           </div>
 
           <!-- Footer -->
@@ -2789,6 +2794,17 @@
         </div>
       </div>
     `;
+
+    // Force .tc-widget-container and host element to display: block !important
+    const renderedContainer = root.querySelector('.tc-widget-container');
+    if (renderedContainer) {
+      renderedContainer.style.setProperty('display', 'block', 'important');
+      renderedContainer.style.setProperty('visibility', 'visible', 'important');
+    }
+    if (host) {
+      host.style.setProperty('display', 'block', 'important');
+      host.style.setProperty('visibility', 'visible', 'important');
+    }
 
     // Event Handlers: Manual Minimize and Close Buttons
     const minBtn = root.getElementById('tc-minimize-btn');
