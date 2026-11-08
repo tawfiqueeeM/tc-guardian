@@ -116,7 +116,7 @@
   let clauseSourceUrl = null; // URL of the terms document when it is not the current page
   let analysisData = null;
   let sourceClauses = {};
-  let isMinimized = false;
+  let isMinimized = null;
   let isDismissedForSession = false;
   let shadowRoot = null;
   const currentDomain = (window.location.hostname || 'localhost').replace(/^www\./, '');
@@ -930,8 +930,16 @@
       host = document.createElement('div');
       host.id = HOST_ID;
       host.className = 'tc-widget-container';
+      host.style.position = 'fixed';
+      host.style.top = '0';
+      host.style.right = '0';
+      host.style.width = '0';
+      host.style.height = '0';
+      host.style.zIndex = '2147483647';
+      host.style.overflow = 'visible';
       (document.body || document.documentElement).appendChild(host);
     }
+    host.style.display = 'block';
     if (!shadowRoot) {
       shadowRoot = host.shadowRoot || host.attachShadow({ mode: 'open' });
     }
@@ -2468,7 +2476,13 @@
         }
         return;
       }
-      isMinimized = true;
+      if (isMinimized === null || isMinimized === undefined) {
+        isMinimized = true;
+      }
+    } else {
+      if (isMinimized === null || isMinimized === undefined) {
+        isMinimized = false;
+      }
     }
 
     const root = ensureShadowRoot();
@@ -2644,11 +2658,18 @@
       `;
     }).join('');
 
-    const emptyHtml = `
+    const hasAnyRisks = CATEGORIES.some((c) => analysis?.categories?.[c]?.present === true);
+    const emptyHtml = hasAnyRisks ? `
+      <div class="tc-empty">
+        <div class="tc-empty-icon">✓</div>
+        <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">All Flagged Clauses Answered</div>
+        <div style="color: #64748b;">You have saved choices for all risks on this site.</div>
+      </div>
+    ` : `
       <div class="tc-empty">
         <div class="tc-empty-icon">🎉</div>
-        <div style="font-weight: 600; color: #f8fafc; margin-bottom: 4px;">No Critical Red Flags Found</div>
-        <div>This agreement did not trigger any of the monitored high-risk categories.</div>
+        <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">No Critical Red Flags Found</div>
+        <div style="color: #64748b;">This agreement did not trigger any of the monitored high-risk categories.</div>
       </div>
     `;
 
@@ -2868,10 +2889,26 @@
     if (!remoteUrl) {
       if (!rawText || rawText.trim().length === 0) {
         // No terms page or terms link found on this page
+        const alwaysShow = await getAlwaysShowWidgetSetting();
+        if (alwaysShow) {
+          analysisData = generateLocalMockResponse('');
+          const { profile, overrides } = await getStorageData();
+          if (isMinimized === null) isMinimized = true;
+          await loadVoiceSettings();
+          renderUI(analysisData, profile, overrides);
+        }
         return;
       }
       filtered = filterHighRiskText(rawText);
       if (!filtered || filtered.trim().length === 0) {
+        const alwaysShow = await getAlwaysShowWidgetSetting();
+        if (alwaysShow) {
+          analysisData = generateLocalMockResponse('');
+          const { profile, overrides } = await getStorageData();
+          if (isMinimized === null) isMinimized = true;
+          await loadVoiceSettings();
+          renderUI(analysisData, profile, overrides);
+        }
         return;
       }
     }
@@ -2916,22 +2953,39 @@
 
   // Read-only State Rendering: Listen for background worker's broadcast of validated analysis
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       if (message?.action === 'TAB_ANALYSIS_FINALIZED' && message.result) {
         handleFinalizedAnalysis(message.result);
+      }
+      if (message?.action === 'ALWAYS_SHOW_WIDGET_CHANGED') {
+        const alwaysShow = Boolean(message.enabled);
+        if (alwaysShow) {
+          isDismissedForSession = false;
+          isMinimized = false;
+        }
+        if (!analysisData) {
+          analysisData = generateLocalMockResponse('');
+        }
+        const { profile, overrides } = await getStorageData();
+        renderUI(analysisData, profile, overrides);
       }
     });
   }
 
   // Dynamic Storage Listener: Re-render UI when always-show widget setting or overrides change
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
+    chrome.storage.onChanged.addListener(async (changes, areaName) => {
       if (areaName === 'local' && (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] || changes[STORAGE_KEYS.SITE_OVERRIDES])) {
-        if (analysisData) {
-          getStorageData().then(({ profile, overrides }) => {
-            renderUI(analysisData, profile, overrides);
-          });
+        const alwaysShow = await getAlwaysShowWidgetSetting();
+        if (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] && alwaysShow) {
+          isDismissedForSession = false;
+          isMinimized = false;
         }
+        if (!analysisData) {
+          analysisData = generateLocalMockResponse('');
+        }
+        const { profile, overrides } = await getStorageData();
+        renderUI(analysisData, profile, overrides);
       }
     });
   }

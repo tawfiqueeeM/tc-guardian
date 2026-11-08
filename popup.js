@@ -264,7 +264,17 @@ function saveAlwaysShowSetting(enabled) {
   if (toggle2) toggle2.checked = Boolean(enabled);
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ [STORAGE_KEYS.ALWAYS_SHOW_WIDGET]: Boolean(enabled) });
+    chrome.storage.local.set({ [STORAGE_KEYS.ALWAYS_SHOW_WIDGET]: Boolean(enabled) }, () => {
+      if (typeof chrome.tabs !== 'undefined' && chrome.tabs.query) {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs && tabs[0]?.id) {
+            chrome.tabs.sendMessage(tabs[0].id, { action: 'ALWAYS_SHOW_WIDGET_CHANGED', enabled: Boolean(enabled) }, () => {
+              if (chrome.runtime.lastError) { /* ignore */ }
+            });
+          }
+        });
+      }
+    });
   }
 }
 
