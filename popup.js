@@ -8,7 +8,8 @@
 
 const STORAGE_KEYS = {
   USER_PROFILE: 'tc_guardian_userProfile',
-  SITE_OVERRIDES: 'tc_guardian_siteOverrides'
+  SITE_OVERRIDES: 'tc_guardian_siteOverrides',
+  ALWAYS_SHOW_WIDGET: 'tc_always_show_widget'
 };
 
 const CATEGORIES = [
@@ -151,6 +152,8 @@ async function saveData(profile, overrides) {
   });
 }
 
+let previousViewBeforeSettings = 'website';
+
 /**
  * View Switcher
  */
@@ -160,17 +163,22 @@ function switchView(viewName) {
   const viewPreferences = document.getElementById('viewPreferences');
   const tabWebsite = document.getElementById('tabBtnWebsite');
   const tabPreferences = document.getElementById('tabBtnPreferences');
-  const btnSettings = document.getElementById('btnToggleSettings');
+  const viewSettings = document.getElementById('settings-view');
+  const navTabs = document.querySelector('.view-tabs-bar');
+
+  if (viewSettings) {
+    viewSettings.style.display = 'none';
+    viewSettings.classList.remove('active');
+  }
+  if (navTabs) {
+    navTabs.style.display = 'flex';
+  }
 
   if (viewName === 'preferences') {
     if (viewWebsite) viewWebsite.classList.remove('active');
     if (viewPreferences) viewPreferences.classList.add('active');
     if (tabWebsite) tabWebsite.classList.remove('active');
     if (tabPreferences) tabPreferences.classList.add('active');
-    if (btnSettings) {
-      btnSettings.textContent = '🌐';
-      btnSettings.title = 'Switch to Website Analysis';
-    }
     // Neutral palette for preferences
     document.body.className = 'theme-neutral';
   } else {
@@ -178,14 +186,75 @@ function switchView(viewName) {
     if (viewPreferences) viewPreferences.classList.remove('active');
     if (tabWebsite) tabWebsite.classList.add('active');
     if (tabPreferences) tabPreferences.classList.remove('active');
-    if (btnSettings) {
-      btnSettings.textContent = '⚙️';
-      btnSettings.title = 'Switch to Preferences & History';
-    }
     // Restore tab's current risk theme
     if (activeTabInfo.riskTheme) {
       document.body.className = activeTabInfo.riskTheme;
     }
+  }
+}
+
+/**
+ * Settings View Management
+ */
+function openSettingsView() {
+  previousViewBeforeSettings = currentView;
+  const viewWebsite = document.getElementById('viewThisWebsite');
+  const viewPreferences = document.getElementById('viewPreferences');
+  const viewSettings = document.getElementById('settings-view');
+  const navTabs = document.querySelector('.view-tabs-bar');
+
+  if (viewWebsite) viewWebsite.classList.remove('active');
+  if (viewPreferences) viewPreferences.classList.remove('active');
+  if (navTabs) navTabs.style.display = 'none';
+
+  if (viewSettings) {
+    viewSettings.style.display = 'block';
+    viewSettings.classList.add('active');
+  }
+
+  loadAlwaysShowSetting();
+}
+
+function closeSettingsView() {
+  const viewSettings = document.getElementById('settings-view');
+  const navTabs = document.querySelector('.view-tabs-bar');
+
+  if (viewSettings) {
+    viewSettings.style.display = 'none';
+    viewSettings.classList.remove('active');
+  }
+
+  if (navTabs) {
+    navTabs.style.display = 'flex';
+  }
+
+  switchView(previousViewBeforeSettings);
+}
+
+function loadAlwaysShowSetting() {
+  const toggle = document.getElementById('toggleAlwaysShowWidget');
+  if (!toggle) return;
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get([STORAGE_KEYS.ALWAYS_SHOW_WIDGET], (res) => {
+      toggle.checked = Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]);
+    });
+  } else {
+    try {
+      toggle.checked = localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true';
+    } catch {
+      toggle.checked = false;
+    }
+  }
+}
+
+function saveAlwaysShowSetting(enabled) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET, String(enabled));
+  } catch {}
+
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ [STORAGE_KEYS.ALWAYS_SHOW_WIDGET]: Boolean(enabled) });
   }
 }
 
@@ -824,13 +893,63 @@ async function init() {
   // Navigation tabs listeners
   const tabWebsite = document.getElementById('tabBtnWebsite');
   const tabPreferences = document.getElementById('tabBtnPreferences');
-  const btnSettings = document.getElementById('btnToggleSettings');
+  const btnSettingsGear = document.getElementById('btnSettingsGear') || document.getElementById('btnToggleSettings');
+  const btnSettingsBack = document.getElementById('btnSettingsBack');
 
   if (tabWebsite) tabWebsite.addEventListener('click', () => switchView('website'));
   if (tabPreferences) tabPreferences.addEventListener('click', () => switchView('preferences'));
-  if (btnSettings) {
-    btnSettings.addEventListener('click', () => {
-      switchView(currentView === 'website' ? 'preferences' : 'website');
+
+  if (btnSettingsGear) {
+    btnSettingsGear.addEventListener('click', () => {
+      const viewSettings = document.getElementById('settings-view');
+      const isSettingsOpen = viewSettings && (viewSettings.style.display === 'block' || viewSettings.classList.contains('active'));
+      if (isSettingsOpen) {
+        closeSettingsView();
+      } else {
+        openSettingsView();
+      }
+    });
+  }
+
+  if (btnSettingsBack) {
+    btnSettingsBack.addEventListener('click', () => {
+      closeSettingsView();
+    });
+  }
+
+  // Toggle switch listener (Always show widget on page)
+  const toggleAlwaysShow = document.getElementById('toggleAlwaysShowWidget');
+  if (toggleAlwaysShow) {
+    loadAlwaysShowSetting();
+    toggleAlwaysShow.addEventListener('change', (e) => {
+      saveAlwaysShowSetting(e.target.checked);
+    });
+  }
+
+  // Reset All Saved Answers button (Domain overrides only)
+  const btnResetSavedAnswers = document.getElementById('btnResetSavedAnswers');
+  if (btnResetSavedAnswers) {
+    btnResetSavedAnswers.addEventListener('click', async () => {
+      currentOverrides = {};
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SITE_OVERRIDES);
+      } catch {}
+
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.remove([STORAGE_KEYS.SITE_OVERRIDES], () => {
+          renderOverridesList();
+        });
+      } else {
+        renderOverridesList();
+      }
+
+      btnResetSavedAnswers.textContent = 'Answers Reset!';
+      btnResetSavedAnswers.disabled = true;
+
+      setTimeout(() => {
+        btnResetSavedAnswers.textContent = 'Reset All Saved Answers';
+        btnResetSavedAnswers.disabled = false;
+      }, 2000);
     });
   }
 

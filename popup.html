@@ -40,7 +40,7 @@
       <span class="brand-name">T&C Guardian</span>
     </div>
     <div class="header-actions">
-      <button id="btnToggleSettings" class="btn-icon-nav" title="Toggle Preferences & History">⚙️</button>
+      <button id="btnSettingsGear" class="btn-icon-nav" title="Settings">⚙️</button>
     </div>
   </header>
 
@@ -108,6 +108,43 @@
         <button class="btn-reset-all" id="btnResetAll" title="Reset all learned preferences">
           ↺ Reset All
         </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETTINGS VIEW (CUTE PASTEL) -->
+  <section id="settings-view" class="view-panel" style="display: none;">
+    <div class="settings-container">
+      <div class="settings-header">
+        <button id="btnSettingsBack" class="btn-settings-back" title="Back to main view">
+          <span>←</span>
+          <span>Back</span>
+        </button>
+        <h2 class="settings-title">Settings</h2>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-item">
+          <div class="settings-item-text">
+            <label class="settings-item-label" for="toggleAlwaysShowWidget">Always show widget on page (even if clean or answered)</label>
+            <span class="settings-item-sub">Displays the floating guardian bubble even when all risks are safe or acknowledged.</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggleAlwaysShowWidget">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-card settings-danger-card">
+        <div class="settings-item-col">
+          <button id="btnResetSavedAnswers" class="btn-reset-saved-answers">
+            Reset All Saved Answers
+          </button>
+          <p class="settings-warning-text">
+            Warning: If you reset, you will be asked about risks again on all previously visited sites.
+          </p>
+        </div>
       </div>
     </div>
   </section>

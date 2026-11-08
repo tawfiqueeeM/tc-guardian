@@ -16,7 +16,8 @@
   const STORAGE_KEYS = {
     USER_PROFILE: 'tc_guardian_userProfile',
     SITE_OVERRIDES: 'tc_guardian_siteOverrides',
-    ANALYSIS_CACHE: 'tc_guardian_analysis_cache'
+    ANALYSIS_CACHE: 'tc_guardian_analysis_cache',
+    ALWAYS_SHOW_WIDGET: 'tc_always_show_widget'
   };
 
   const CATEGORIES = [
@@ -178,6 +179,26 @@
 
     const overrides = (raw && raw[STORAGE_KEYS.SITE_OVERRIDES]) || {};
     return { profile, overrides };
+  }
+
+  function getAlwaysShowWidgetSetting() {
+    return new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        try {
+          chrome.storage.local.get([STORAGE_KEYS.ALWAYS_SHOW_WIDGET], (res) => {
+            resolve(Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]));
+          });
+          return;
+        } catch (e) {
+          console.warn('[TC-Guardian] Error reading alwaysShowWidget:', e);
+        }
+      }
+      try {
+        resolve(localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true');
+      } catch {
+        resolve(false);
+      }
+    });
   }
 
   function saveStorageData(profile, overrides) {
@@ -1957,19 +1978,28 @@
       return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
     });
 
-    // If total number of unacknowledged active risks is 0, do not inject, render, or show at all
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
+
+    // If total number of unacknowledged active risks is 0, check alwaysShowWidget override
     if (unacknowledgedActiveCategories.length === 0) {
-      if (shadowRoot) {
-        shadowRoot.innerHTML = '';
+      if (!alwaysShowWidget) {
+        if (shadowRoot) {
+          shadowRoot.innerHTML = '';
+        }
+        const host = document.getElementById('tc-guardian-host');
+        if (host) {
+          host.style.display = 'none';
+        }
+        return;
       }
-      const host = document.getElementById('tc-guardian-host');
-      if (host) {
-        host.style.display = 'none';
-      }
-      return;
+      isMinimized = true;
     }
 
     const root = ensureShadowRoot();
+    const host = document.getElementById('tc-guardian-host');
+    if (host && host.style.display === 'none') {
+      host.style.display = '';
+    }
     const mascotFileName = getHighestRiskMascotFileName(analysis);
     const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
       ? chrome.runtime.getURL(mascotFileName)
@@ -2165,12 +2195,12 @@
 
           <!-- Cards List -->
           <div class="tc-body">
-            ${categoryCardsHtml}
+            ${categoryCardsHtml || emptyHtml}
           </div>
 
           <!-- Footer -->
           <div class="tc-footer">
-            <span>${presentCategories.length} active question${presentCategories.length === 1 ? '' : 's'}</span>
+            <span>${sortedCategories.length} active question${sortedCategories.length === 1 ? '' : 's'}</span>
             <span style="color: #38bdf8;">Choices save instantly</span>
           </div>
         </div>
@@ -2347,6 +2377,7 @@
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
     const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
 
     // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
     const unackCount = CATEGORIES.filter((c) => {
@@ -2355,7 +2386,7 @@
       return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
     }).length;
 
-    if (unackCount === 0) {
+    if (unackCount === 0 && !alwaysShowWidget) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
       if (shadowRoot) shadowRoot.innerHTML = '';
@@ -2363,7 +2394,7 @@
     }
 
     // Check if the current page is a Signup, Checkout, or Legal page
-    if (!isSignupCheckoutOrLegalPage()) {
+    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
       // Silent analysis complete! Toolbar badge is updated in background.js, do not inject overlay.
       return;
     }
@@ -2380,6 +2411,19 @@
     });
   }
 
+  // Dynamic Storage Listener: Re-render UI when always-show widget setting or overrides change
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] || changes[STORAGE_KEYS.SITE_OVERRIDES])) {
+        if (analysisData) {
+          getStorageData().then(({ profile, overrides }) => {
+            renderUI(analysisData, profile, overrides);
+          });
+        }
+      }
+    });
+  }
+
   async function handleFinalizedAnalysis(finalizedResult) {
     if (isDismissedForSession) {
       return;
@@ -2392,6 +2436,7 @@
 
     const { profile, overrides } = await getStorageData();
     const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
 
     // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
     const unackCount = CATEGORIES.filter((c) => {
@@ -2400,7 +2445,7 @@
       return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
     }).length;
 
-    if (unackCount === 0) {
+    if (unackCount === 0 && !alwaysShowWidget) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
       if (shadowRoot) shadowRoot.innerHTML = '';
@@ -2408,7 +2453,7 @@
     }
 
     // Check if the current page is a Signup, Checkout, or Legal page
-    if (!isSignupCheckoutOrLegalPage()) {
+    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
       return;
     }
 
