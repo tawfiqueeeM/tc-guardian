@@ -807,7 +807,7 @@ async function queryTosdr(domain, sourceText = '') {
       const isNotRisk = /does not sell|doesn't sell|never sell|will not sell|does not train|doesn't train|not renew|opt-out available|can delete/i.test(text);
       if (isNotRisk) continue;
 
-      if (/sell|broker|third party|advertis/i.test(text)) {
+      if (/\b(?:sell|sold|selling|brokers?)\b|third[- ]part(?:y|ies)\s+(?:advertis|market|data)|advertis(?:ers|ing\s+partners)/i.test(text)) {
         const rawSnippet = quoteSnippet || extractCategorySnippet(sourceText, 'DATA_SALE');
         data.DATA_SALE = {
           present: true,
@@ -817,7 +817,7 @@ async function queryTosdr(domain, sourceText = '') {
         };
         mappedAny = true;
       }
-      if (/train|artificial intelligence|machine learning|ai/i.test(text)) {
+      if (/\btrain(?:s|ing)?\b|artificial intelligence|machine learning|\bai\b/i.test(text)) {
         const rawSnippet = quoteSnippet || extractCategorySnippet(sourceText, 'AI_TRAINING');
         data.AI_TRAINING = {
           present: true,
@@ -827,7 +827,7 @@ async function queryTosdr(domain, sourceText = '') {
         };
         mappedAny = true;
       }
-      if (/renew|subscription|refund|cancel/i.test(text)) {
+      if (/auto(?:matic(?:ally)?)?[- ]?renew|recurring|non-?refundable/i.test(text)) {
         const rawSnippet = quoteSnippet || extractCategorySnippet(sourceText, 'AUTO_RENEW');
         data.AUTO_RENEW = {
           present: true,
@@ -837,7 +837,7 @@ async function queryTosdr(domain, sourceText = '') {
         };
         mappedAny = true;
       }
-      if (/retain|delete|archive|preserve/i.test(text)) {
+      if (/(?:retain|keep|preserve|archive)[^.]{0,60}(?:indefinite|permanent|after\s+(?:you\s+)?(?:delet|terminat|clos))|indefinite(?:ly)?\s+(?:data\s+)?retention/i.test(text)) {
         const rawSnippet = quoteSnippet || extractCategorySnippet(sourceText, 'NO_DELETE');
         data.NO_DELETE = {
           present: true,
@@ -887,7 +887,10 @@ async function queryBrowserAI(text, domain = '') {
     const ai = self?.ai || (typeof window !== 'undefined' ? window?.ai : null);
     if (!ai || !ai.languageModel) return null;
 
-    const capabilities = await ai.languageModel.capabilities();
+    const capabilities = await Promise.race([
+      ai.languageModel.capabilities(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Browser AI capability check timed out')), 1500))
+    ]);
     if (capabilities.available === 'no') return null;
 
     const session = await ai.languageModel.create({
@@ -923,7 +926,10 @@ Terms to analyze:
 ${text.slice(0, 8000)}
 `;
 
-    const rawResponse = await session.prompt(promptText);
+    const rawResponse = await Promise.race([
+      session.prompt(promptText),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Browser AI prompt timed out')), 4000))
+    ]);
     const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
@@ -1102,7 +1108,10 @@ async function queryCloudFallback(text, domain = '') {
 
   const providerTimeout = CONFIG.PROVIDER_TIMEOUT_MS || 3000;
 
+  const ringStart = Date.now();
   for (const providerId of fallbackOrder) {
+    // Stay inside the 10s overall guarantee: stop trying new providers after ~6s
+    if (Date.now() - ringStart > 4500) break;
     const normalized = String(providerId).toLowerCase().trim();
 
     try {
@@ -1286,39 +1295,34 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
  * Fallback Detection if the LLMs fail, timeout, or hit rate limits.
  */
 async function executeAnalysisPipeline(text, domain) {
-  // Tier 1: Primary Cloud LLM (Cerebras -> Groq -> OpenRouter -> Gemini)
-  // Ensure the pipeline properly attempts the primary LLM (Cloud AI) API calls first
-  try {
-    const cloudResult = await queryCloudFallback(text, domain);
-    // If an actual Cloud LLM succeeded (not the internal fallback), return immediately
-    if (cloudResult?.success && cloudResult?.data && !/fallback/i.test(cloudResult.engine)) {
-      return cloudResult;
-    }
-  } catch (err) {
-    console.info('[T&C Guardian] Primary Cloud LLM failed:', err.message || err);
-  }
-
-  // Tier 2: ToS;DR Fast Database Lookup
+  // Tier 1: ToS;DR fast database lookup
   try {
     const tosdrResult = await queryTosdr(domain, text);
     if (tosdrResult?.success && tosdrResult?.data) {
       return tosdrResult;
     }
   } catch (err) {
-    console.info('[T&C Guardian] Tier 2 ToS;DR failed:', err.message || err);
+    console.info('[T&C Guardian] Tier 1 ToS;DR failed:', err.message || err);
   }
 
-  // Tier 3: Local Browser AI (if available)
+  // Tier 2: Local browser AI (Opera Web AI / Chromium Prompt API)
   try {
     const browserAiResult = await queryBrowserAI(text, domain);
     if (browserAiResult?.success && browserAiResult?.data) {
       return browserAiResult;
     }
   } catch (err) {
-    console.info('[T&C Guardian] Tier 3 Browser AI failed:', err.message || err);
+    console.info('[T&C Guardian] Tier 2 Browser AI failed:', err.message || err);
   }
 
-  // Tier 4: Fallback Detection (only reached if LLMs fail, timeout, or hit rate limits)
+  // Tier 3: Cloud ring (Cerebras -> Groq -> OpenRouter -> Gemini); returns keyword fallback if all fail
+  try {
+    return await queryCloudFallback(text, domain);
+  } catch (err) {
+    console.info('[T&C Guardian] Tier 3 Cloud ring failed:', err.message || err);
+  }
+
+  // Tier 4: Dynamic keyword fallback
   return generateGuaranteedFallback('Fallback Detection', text, domain);
 }
 
@@ -1535,6 +1539,28 @@ if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onRemoved) {
  * Verifies scanId against active scan in session storage to eliminate race conditions.
  * Validates payload, stores record, updates toolbar icon/badge, and broadcasts finalized state to content script.
  */
+const autoPopupShown = new Set();
+// tabId -> start time of a scan that has not finished yet (lets the popup wait instead of rescanning)
+const scanInFlight = new Map();
+/**
+ * Automatically open the toolbar popup once per tab+page when a scan finds unanswered risks.
+ * chrome.action.openPopup may be unavailable or refused (no focused window); failures are ignored.
+ */
+function maybeAutoOpenPopup(tabId, url) {
+  const key = `${tabId}|${String(url).split('#')[0]}`;
+  if (autoPopupShown.has(key)) return;
+  autoPopupShown.add(key);
+  try {
+    if (chrome.action && typeof chrome.action.openPopup === 'function') {
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab || !tab.active) return;
+        const p = chrome.action.openPopup({ windowId: tab.windowId });
+        if (p && typeof p.catch === 'function') p.catch((e) => console.info('[T&C Guardian] openPopup refused:', e?.message || e));
+      });
+    }
+  } catch (e) { /* ignore */ }
+}
+
 async function finalizeScan(tabId, scanId, result, context = {}) {
   const url = context.url || '';
   const domain = context.domain || (url ? new URL(url).hostname.replace(/^www\./, '') : '');
@@ -1548,6 +1574,8 @@ async function finalizeScan(tabId, scanId, result, context = {}) {
       return { success: false, reason: 'STALE_SCAN_DISCARDED', status: 'STALE' };
     }
   }
+
+  if (tabId) scanInFlight.delete(tabId);
 
   // 2. Strict Result Validation: validate all 5 categories have explicit boolean present
   let status = result?.status || (result?.success ? 'SUCCESS' : 'ERROR');
@@ -1660,6 +1688,7 @@ async function finalizeScan(tabId, scanId, result, context = {}) {
     await tabAnalysisStore.set(tabId, record);
     // 6. Update toolbar icon and badge
     updateToolbarIcon(tabId, riskLevel, riskCount);
+    if (context.auto && riskCount > 0) maybeAutoOpenPopup(tabId, url);
 
     // 7. Broadcast finalized, validated state to content script in active tab
     try {
@@ -1752,6 +1781,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     (async () => {
       if (tabId) {
+        scanInFlight.set(tabId, Date.now());
         await setActiveScanId(tabId, scanId);
       }
 
@@ -1790,7 +1820,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           engine: fallbackRes.engine || 'Timeout Fallback'
         });
         sendOnce(record.status === 'SUCCESS' ? fallbackRes : record);
-      }, 10000);
+      }, 8000);
 
       try {
         // Linked Policy Priority (P3):
@@ -1804,8 +1834,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         if (shouldFetchPolicy) {
           try {
-            const fetchRes = await fetch(policyUrl);
-            if (!fetchRes.ok) {
+            const fetchRes = await fetch(policyUrl, { signal: AbortSignal.timeout(5000) });
+            if (!fetchRes.ok && fetchRes.status !== 0) {
               throw new Error(`HTTP ${fetchRes.status}: ${fetchRes.statusText}`);
             }
             const html = await fetchRes.text();
@@ -1867,7 +1897,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           url: tabUrl,
           domain,
           policyUrl,
-          engine: result?.engine || 'Analysis Pipeline'
+          engine: result?.engine || 'Analysis Pipeline',
+          auto: Boolean(sender?.tab)
         });
 
         if (finalized.reason === 'STALE_SCAN_DISCARDED') {
@@ -1920,6 +1951,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     (async () => {
       const record = await tabAnalysisStore.get(tabId);
+      const startedAt = scanInFlight.get(tabId);
+      if (startedAt && Date.now() - startedAt < 15000) {
+        sendResponse({ success: false, status: 'SCANNING', reason: 'SCAN_IN_PROGRESS' });
+        return;
+      }
       if (!record) {
         sendResponse({ success: false, reason: 'NOT_ANALYZED', status: 'UNANALYZED' });
         return;
@@ -2015,33 +2051,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // Explicit Choice Model: Save explicit user preference without automated assumptions
+  // Explicit Choice Model: the content script already stores votes and overrides.
+  // Here we only (idempotently) record the override and refresh the toolbar badge.
   if (request?.action === 'SAVE_EXPLICIT_CHOICE') {
     const { domain, category, isAccepted } = request;
-    chrome.storage.local.get(['tc_guardian_userProfile', 'tc_guardian_siteOverrides'], (res) => {
-      const profile = res.tc_guardian_userProfile || getDefaultUserProfile();
+    const tabId = sender?.tab?.id;
+    chrome.storage.local.get(['tc_guardian_siteOverrides'], async (res) => {
       const overrides = res.tc_guardian_siteOverrides || {};
-
-      if (category) {
-        if (!profile[category]) profile[category] = { yes: 0, no: 0 };
-        if (isAccepted) {
-          profile[category].yes += 1;
-        } else {
-          profile[category].no += 1;
-        }
-
-        if (domain) {
-          if (!overrides[domain]) overrides[domain] = {};
-          overrides[domain][category] = Boolean(isAccepted);
+      if (domain && category) {
+        if (!overrides[domain]) overrides[domain] = {};
+        overrides[domain][category] = Boolean(isAccepted);
+        await chrome.storage.local.set({ tc_guardian_siteOverrides: overrides });
+      }
+      if (tabId) {
+        const record = await tabAnalysisStore.get(tabId);
+        if (record?.data && category && record.data[category]) {
+          record.data[category].acknowledged = true;
+          const info = computeOverallRisk(record.data);
+          record.riskLevel = info.level;
+          record.riskCount = info.count;
+          await tabAnalysisStore.set(tabId, record);
+          updateToolbarIcon(tabId, info.level, info.count);
         }
       }
-
-      chrome.storage.local.set({
-        tc_guardian_userProfile: profile,
-        tc_guardian_siteOverrides: overrides
-      }, () => {
-        sendResponse({ success: true, profile, overrides });
-      });
+      sendResponse({ success: true });
     });
     return true;
   }

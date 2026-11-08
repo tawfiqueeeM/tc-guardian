@@ -94,7 +94,7 @@ All communication between the content script (`content.js`) and background servi
   - **Numeric Badge**: OffscreenCanvas dynamic icon rendering with custom notification indicator and active risk count. Cleared when count is 0 or on tab navigation.
 - **Conditional In-Page Overlay UX**:
   - Content script analyzes terms silently on all pages so `background.js` can update the toolbar badge without interrupting browsing.
-  - In-page floating overlay is only rendered on Signup, Checkout, or Legal pages (`isSignupCheckoutOrLegalPage()`).
+  - In-page floating overlay is rendered automatically on any page where terms are found and unanswered risks exist; `background.js` also auto-opens the toolbar popup once per page (`maybeAutoOpenPopup`), and `popup.js` auto-scans on open when no result exists.
   - Clicking `[ Yes ]` (accepting clauses) immediately closes and hides the floating overlay out of the user's way.
 
 ---
@@ -119,6 +119,8 @@ Every analysis engine must evaluate and populate all 5 categories:
 ## 4. Multi-Tier Analysis Engine Hierarchy (Developer A)
 
 When `background.js` receives `ANALYZE_TC`:
+
+> Implemented order: ToS;DR → local browser AI → cloud ring → keyword fallback.
 
 1. **Tier 1 — Fast Lookup (`ToS;DR`)**:
    - Queries `https://api.tosdr.org/search/v4/?query=${domain}` with a 2000ms timeout (`CONFIG.TOSDR_TIMEOUT_MS`).

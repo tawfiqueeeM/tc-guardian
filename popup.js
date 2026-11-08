@@ -232,18 +232,23 @@ function closeSettingsView() {
 }
 
 function loadAlwaysShowSetting() {
-  const toggle = document.getElementById('toggleAlwaysShowWidget');
-  if (!toggle) return;
+  const toggle1 = document.getElementById('toggleAlwaysShowWidget');
+  const toggle2 = document.getElementById('toggleAlwaysShowWidgetPref');
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get([STORAGE_KEYS.ALWAYS_SHOW_WIDGET], (res) => {
-      toggle.checked = Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]);
+      const val = Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]);
+      if (toggle1) toggle1.checked = val;
+      if (toggle2) toggle2.checked = val;
     });
   } else {
     try {
-      toggle.checked = localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true';
+      const val = localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true';
+      if (toggle1) toggle1.checked = val;
+      if (toggle2) toggle2.checked = val;
     } catch {
-      toggle.checked = false;
+      if (toggle1) toggle1.checked = false;
+      if (toggle2) toggle2.checked = false;
     }
   }
 }
@@ -253,8 +258,23 @@ function saveAlwaysShowSetting(enabled) {
     localStorage.setItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET, String(enabled));
   } catch {}
 
+  const toggle1 = document.getElementById('toggleAlwaysShowWidget');
+  const toggle2 = document.getElementById('toggleAlwaysShowWidgetPref');
+  if (toggle1) toggle1.checked = Boolean(enabled);
+  if (toggle2) toggle2.checked = Boolean(enabled);
+
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ [STORAGE_KEYS.ALWAYS_SHOW_WIDGET]: Boolean(enabled) });
+    chrome.storage.local.set({ [STORAGE_KEYS.ALWAYS_SHOW_WIDGET]: Boolean(enabled) }, () => {
+      if (typeof chrome.tabs !== 'undefined' && chrome.tabs.query) {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs && tabs[0]?.id) {
+            chrome.tabs.sendMessage(tabs[0].id, { action: 'ALWAYS_SHOW_WIDGET_CHANGED', enabled: Boolean(enabled) }, () => {
+              if (chrome.runtime.lastError) { /* ignore */ }
+            });
+          }
+        });
+      }
+    });
   }
 }
 
@@ -295,8 +315,17 @@ async function fetchActiveTab() {
   });
 }
 
+// Scan automatically the first time the popup opens on a page that has no result yet
+let autoScanTried = false;
+let scanPolls = 0;
+function autoScanOnce() {
+  if (autoScanTried) return;
+  autoScanTried = true;
+  triggerActiveTabScan();
+}
+
 async function loadTabAnalysis() {
-  if (!activeTabInfo.id || !activeTabInfo.url.startsWith('http')) {
+  if (!activeTabInfo.id || (!activeTabInfo.url.startsWith('http') && !activeTabInfo.url.startsWith('file'))) {
     renderUnanalyzedState(activeTabInfo.domain, 'Non-HTTP page or internal browser tab.');
     return;
   }
@@ -310,6 +339,16 @@ async function loadTabAnalysis() {
   }, (res) => {
     if (chrome.runtime.lastError || !res) {
       renderUnanalyzedState(activeTabInfo.domain);
+      autoScanOnce();
+      return;
+    }
+    if (res.status === 'SCANNING') {
+      // A scan (usually the automatic one from the page) is already running: wait for it
+      scanPolls += 1;
+      if (scanPolls > 20) { renderUnanalyzedState(activeTabInfo.domain); autoScanOnce(); return; }
+      const subtext = document.getElementById('heroSubtext');
+      if (subtext) subtext.textContent = 'Scanning terms and privacy policies...';
+      setTimeout(loadTabAnalysis, 700);
       return;
     }
     if (res.status === 'ERROR' || res.riskLevel === 'ERROR' || res.reason === 'POLICY_FETCH_FAILED') {
@@ -318,6 +357,7 @@ async function loadTabAnalysis() {
     }
     if (!res.success || res.status === 'UNANALYZED' || !res.data) {
       renderUnanalyzedState(activeTabInfo.domain);
+      autoScanOnce();
       return;
     }
     renderWebsiteAnalysis(res.data, res.engine, res.domain || activeTabInfo.domain, res.riskLevel, res.policyUrl);
@@ -654,6 +694,10 @@ function renderErrorState(errorMsg = '', domain = '') {
  * Trigger On-Demand Scan of the Active Tab
  */
 async function triggerActiveTabScan() {
+  if (!activeTabInfo.id) {
+    renderUnanalyzedState(activeTabInfo.domain, 'Cannot scan this tab (unsupported tab ID).');
+    return;
+  }
   const btnScan = document.getElementById('btnScanNow');
   const subtext = document.getElementById('heroSubtext');
   if (btnScan) {
@@ -917,11 +961,17 @@ async function init() {
     });
   }
 
-  // Toggle switch listener (Always show widget on page)
+  // Toggle switch listeners (Always show widget on page)
   const toggleAlwaysShow = document.getElementById('toggleAlwaysShowWidget');
+  const toggleAlwaysShowPref = document.getElementById('toggleAlwaysShowWidgetPref');
+  loadAlwaysShowSetting();
   if (toggleAlwaysShow) {
-    loadAlwaysShowSetting();
     toggleAlwaysShow.addEventListener('change', (e) => {
+      saveAlwaysShowSetting(e.target.checked);
+    });
+  }
+  if (toggleAlwaysShowPref) {
+    toggleAlwaysShowPref.addEventListener('change', (e) => {
       saveAlwaysShowSetting(e.target.checked);
     });
   }

@@ -116,7 +116,7 @@
   let clauseSourceUrl = null; // URL of the terms document when it is not the current page
   let analysisData = null;
   let sourceClauses = {};
-  let isMinimized = false;
+  let isMinimized = null;
   let isDismissedForSession = false;
   let shadowRoot = null;
   const currentDomain = (window.location.hostname || 'localhost').replace(/^www\./, '');
@@ -399,7 +399,7 @@
       ) {
         return true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 3. Page Title & Meta Tags Check
     try {
@@ -411,7 +411,7 @@
         const content = meta.getAttribute('content') || '';
         if (SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX.test(content)) return true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 4. Signup / Checkout Interactive Elements
     try {
@@ -433,7 +433,7 @@
         const action = form.getAttribute('action') || '';
         if (SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(action)) return true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     return false;
   }
@@ -444,8 +444,13 @@
       const text = (a.textContent || '').trim();
       const label = a.getAttribute('aria-label') || a.getAttribute('title') || '';
       if (TERMS_LINK_REGEX.test(text) || TERMS_LINK_REGEX.test(label)) {
-        if (/^https?:/i.test(a.href)) return a.href;
+        if (/^(https?|file):/i.test(a.href)) return a.href;
       }
+    }
+    // Second pass: link URL looks like a legal page (e.g. footer "/privacy", "/terms")
+    const urlLike = /\/(?:terms|tos|privacy|legal|eula|conditions)(?:[-_/.?]|$)/i;
+    for (const a of links) {
+      if (/^(https?|file):/i.test(a.href) && urlLike.test(new URL(a.href).pathname)) return a.href;
     }
     return null;
   }
@@ -453,7 +458,7 @@
   async function fetchTermsUrl(url) {
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok && response.status !== 0) throw new Error(`HTTP ${response.status}`);
       const html = await response.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
@@ -907,10 +912,15 @@
       }
 
       if (catData) {
-        const isPresent = Boolean(catData.present);
         normalized[catKey] = {
           present: Boolean(catData.present),
-          summary: catData.summary || CATEGORY_META[catKey].defaultSummary
+          summary: catData.summary || CATEGORY_META[catKey].defaultSummary,
+          shortSummary: catData.shortSummary || '',
+          snippet: catData.snippet || '',
+          optOutSteps: Array.isArray(catData.optOutSteps) ? catData.optOutSteps : null,
+          optOutLink: catData.optOutLink || null,
+          cancellationGuide: catData.cancellationGuide || null,
+          acknowledged: Boolean(catData.acknowledged)
         };
       } else {
         normalized[catKey] = {
@@ -918,7 +928,10 @@
           summary: CATEGORY_META[catKey].defaultSummary,
           shortSummary: '',
           snippet: '',
-          cancellationGuide: null
+          optOutSteps: null,
+          optOutLink: null,
+          cancellationGuide: null,
+          acknowledged: false
         };
       }
     });
@@ -939,8 +952,16 @@
       host = document.createElement('div');
       host.id = HOST_ID;
       host.className = 'tc-widget-container';
+      host.style.position = 'fixed';
+      host.style.top = '0';
+      host.style.right = '0';
+      host.style.width = '0';
+      host.style.height = '0';
+      host.style.zIndex = '2147483647';
+      host.style.overflow = 'visible';
       (document.body || document.documentElement).appendChild(host);
     }
+    host.style.display = 'block';
     if (!shadowRoot) {
       shadowRoot = host.shadowRoot || host.attachShadow({ mode: 'open' });
     }
@@ -1806,6 +1827,40 @@
         margin-bottom: 8px;
       }
 
+      /* Recommendation Verdict Bar */
+      .tc-reco {
+        padding: 10px 14px;
+        margin: 0 18px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.4;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      mark {
+        background: rgba(250, 204, 21, 0.25);
+        color: #fde68a;
+        padding: 0 2px;
+        border-radius: 3px;
+      }
+
+      .tc-subbar-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .tc-autoread {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        color: #94a3b8;
+      }
+
       /* Voice settings + notices */
       .tc-settings {
         padding: 10px 18px;
@@ -1825,17 +1880,13 @@
       .tc-voice-notice { padding: 6px 18px; font-size: 11px; color: #fde68a; background: rgba(245, 158, 11, 0.12); }
       .tc-speak-btn { margin-left: auto; padding: 0 4px; font-size: 12px; }
 
-      /* Recommendation Verdict Bar */
-      .tc-reco {
-        padding: 10px 14px;
-        margin: 0 18px 10px;
-        border-radius: 10px;
-        font-size: 12px;
+      .tc-risk-tag {
+        font-size: 10px;
         font-weight: 700;
-        line-height: 1.4;
-        display: flex;
-        align-items: center;
-        gap: 8px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
       }
 
       .tc-reco-danger {
@@ -1843,6 +1894,7 @@
         border-left: 5px solid #dc2626 !important;
         border: 1px solid #fecaca;
         color: #991b1b;
+      }
       }
 
       .tc-reco-warn {
@@ -2007,9 +2059,11 @@
   function saveVoiceSettings() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       try {
-        chrome.storage.local.set({ [VOICE_KEY]: {
-          autoRead: voiceAutoRead, enabled: voiceEnabled, engine: voiceEngineChoice, rate: voiceRate, voiceName
-        } });
+        chrome.storage.local.set({
+          [VOICE_KEY]: {
+            autoRead: voiceAutoRead, enabled: voiceEnabled, engine: voiceEngineChoice, rate: voiceRate, voiceName
+          }
+        });
       } catch (e) { /* ignore */ }
     }
   }
@@ -2119,15 +2173,24 @@
   function speakBrowser(text) {
     return new Promise((resolve) => {
       if (!voiceSupported() || !text) { resolve(); return; }
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'en-US';
-      u.rate = voiceRate * 0.97;
-      u.pitch = 1;
-      const v = pickBrowserVoice();
-      if (v) u.voice = v;
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      window.speechSynthesis.speak(u);
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'en-US';
+        u.rate = voiceRate * 0.97;
+        u.pitch = 1;
+        const v = pickBrowserVoice();
+        if (v) u.voice = v;
+        u.onend = () => resolve();
+        u.onerror = (e) => {
+          console.warn('[TC-Guardian] Browser speech synthesis error:', e);
+          resolve();
+        };
+        window.speechSynthesis.speak(u);
+      } catch (err) {
+        console.warn('[TC-Guardian] speakBrowser exception:', err);
+        resolve();
+      }
     });
   }
 
@@ -2392,6 +2455,10 @@
   }
 
   async function renderUI(analysis, profile, overrides) {
+    currentAnalysis = analysis;
+    lastProfile = profile;
+    lastOverrides = overrides;
+
     if (isDismissedForSession) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
@@ -2430,8 +2497,21 @@
         }
         return;
       }
-      isMinimized = true;
+      if (isMinimized === null || isMinimized === undefined) {
+        isMinimized = true;
+      }
+    } else {
+      if (isMinimized === null || isMinimized === undefined) {
+        isMinimized = false;
+      }
     }
+
+    // Banner: a flagged category the user has historically rejected most of the time (history only, never auto-decides)
+    const hasDealbreaker = unacknowledgedActiveCategories.some((c) => {
+      const st = (profile && profile[c]) || { yes: 0, no: 0 };
+      const total = (Number(st.yes) || 0) + (Number(st.no) || 0);
+      return total > 0 && (Number(st.no) || 0) / total >= 0.6;
+    });
 
     const root = ensureShadowRoot();
     const host = document.getElementById('tc-guardian-host');
@@ -2562,8 +2642,9 @@
         <div class="tc-card tc-risk-item ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}" data-cat="${catKey}">
           <div class="tc-card-header">
             <span class="tc-card-title">${meta.icon} ${escapeHtml(meta.name)}</span>
-            ${voiceOn() ? `<button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>` : ''}
+            <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
             ${overrideBadgeHtml}
+            ${voiceOn() ? `<button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>` : ''}
           </div>
 
           <div class="tc-card-question">Is this risk okay with you?</div>
@@ -2605,11 +2686,18 @@
       `;
     }).join('');
 
-    const emptyHtml = `
+    const hasAnyRisks = CATEGORIES.some((c) => analysis?.categories?.[c]?.present === true);
+    const emptyHtml = hasAnyRisks ? `
+      <div class="tc-empty">
+        <div class="tc-empty-icon">✓</div>
+        <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">All Flagged Clauses Answered</div>
+        <div style="color: #64748b;">You have saved choices for all risks on this site.</div>
+      </div>
+    ` : `
       <div class="tc-empty">
         <div class="tc-empty-icon">🎉</div>
-        <div style="font-weight: 600; color: #f8fafc; margin-bottom: 4px;">No Critical Red Flags Found</div>
-        <div>This agreement did not trigger any of the monitored high-risk categories.</div>
+        <div style="font-weight: 600; color: #0f172a; margin-bottom: 4px;">No Critical Red Flags Found</div>
+        <div style="color: #64748b;">This agreement did not trigger any of the monitored high-risk categories.</div>
       </div>
     `;
 
@@ -2637,6 +2725,14 @@
 
           ${settingsOpen && voiceSupported() ? buildSettingsHtml() : ''}
           <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
+
+          <!-- Dealbreaker Alert Banner -->
+          ${hasDealbreaker ? `
+            <div class="tc-dealbreaker-banner">
+              <span>🚨</span>
+              <span>Caution: Agreement contains terms you routinely reject!</span>
+            </div>
+          ` : ''}
 
           <!-- Cards List -->
           <div class="tc-body">
@@ -2669,6 +2765,18 @@
       });
     }
 
+    const resetBtn = root.getElementById('tc-reset-btn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        if (confirm('Reset all learned preference history and site overrides?')) {
+          const freshProfile = getDefaultProfile();
+          const freshOverrides = {};
+          await saveStorageData(freshProfile, freshOverrides);
+          renderUI(analysis, freshProfile, freshOverrides);
+        }
+      });
+    }
+
     // Voice controls
     const readBtn = root.getElementById('tc-voice-read');
     if (readBtn) readBtn.addEventListener('click', () => { if (voiceMode) stopVoice(); else readAllAloud(); });
@@ -2682,11 +2790,7 @@
 
     // View Clause buttons
     root.querySelectorAll('.tc-view-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        jumpToClause(btn.getAttribute('data-cat'));
-      });
+      btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
     });
 
     // Accept / Reject Buttons: Multi-Question Persistence
@@ -2699,31 +2803,31 @@
         const choice = target.getAttribute('data-choice');
         const isYes = (choice === 'yes');
 
-        if (target.disabled) return;
-        target.disabled = true;
+        if (choiceBusy) return;
+        choiceBusy = true;
+        let currentProfile;
+        let currentOverrides;
+        try {
+          ({ profile: currentProfile, overrides: currentOverrides } = await getStorageData());
+          const prev = currentOverrides[currentDomain] && currentOverrides[currentDomain][catKey];
 
-        const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+          // Counts are updated here only (the background just refreshes the badge).
+          // Changing an answer replaces the earlier vote instead of adding another.
+          if (prev !== isYes) {
+            if (!currentProfile[catKey]) currentProfile[catKey] = { yes: 0, no: 0 };
+            const st = currentProfile[catKey];
+            if (prev === true) st.yes = Math.max(0, (st.yes || 0) - 1);
+            if (prev === false) st.no = Math.max(0, (st.no || 0) - 1);
+            if (isYes) st.yes = (st.yes || 0) + 1; else st.no = (st.no || 0) + 1;
 
-        // Increment global counter
-        if (!currentProfile[catKey]) {
-          currentProfile[catKey] = { yes: 0, no: 0 };
+            if (!currentOverrides[currentDomain]) currentOverrides[currentDomain] = {};
+            currentOverrides[currentDomain][catKey] = isYes;
+            await saveStorageData(currentProfile, currentOverrides);
+          }
+        } finally {
+          choiceBusy = false;
         }
-        if (isYes) {
-          currentProfile[catKey].yes = (currentProfile[catKey].yes || 0) + 1;
-        } else {
-          currentProfile[catKey].no = (currentProfile[catKey].no || 0) + 1;
-        }
-
-        // Set per-site override for domain
-        if (!currentOverrides[currentDomain]) {
-          currentOverrides[currentDomain] = {};
-        }
-        currentOverrides[currentDomain][catKey] = isYes;
-
-        // Save preferences
-        await saveStorageData(currentProfile, currentOverrides);
-
-        // Also notify background worker via SAVE_EXPLICIT_CHOICE
+        // Tell the background so the toolbar badge drops the answered risk
         if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
           try {
             chrome.runtime.sendMessage({
@@ -2731,7 +2835,7 @@
               domain: currentDomain,
               category: catKey,
               isAccepted: isYes
-            });
+            }, () => { void chrome.runtime.lastError; });
           } catch (err) {}
         }
 
@@ -2789,9 +2893,10 @@
    */
   let initStarted = false;
   async function init() {
+    if (initStarted) return;
+    initStarted = true;
     // Cache Invalidation: Clear local storage/cached analysis results on page load
     clearCachedAnalysis();
-
     let rawText = '';
     let remoteUrl = null;
 
@@ -2807,8 +2912,9 @@
         if (new URL(termsUrl).origin === window.location.origin) {
           rawText = await fetchTermsUrl(termsUrl);
           if (rawText) buildClauseRefsFromText(rawText);
-        } else {
-          remoteUrl = termsUrl; // CORS-blocked here; let background.js fetch it
+        }
+        if (!rawText) {
+          remoteUrl = termsUrl; // CORS-blocked or local fetch restricted; let background.js fetch it
         }
       }
     }
@@ -2817,10 +2923,26 @@
     if (!remoteUrl) {
       if (!rawText || rawText.trim().length === 0) {
         // No terms page or terms link found on this page
+        const alwaysShow = await getAlwaysShowWidgetSetting();
+        if (alwaysShow) {
+          analysisData = generateLocalMockResponse('');
+          const { profile, overrides } = await getStorageData();
+          if (isMinimized === null) isMinimized = true;
+          await loadVoiceSettings();
+          renderUI(analysisData, profile, overrides);
+        }
         return;
       }
       filtered = filterHighRiskText(rawText);
       if (!filtered || filtered.trim().length === 0) {
+        const alwaysShow = await getAlwaysShowWidgetSetting();
+        if (alwaysShow) {
+          analysisData = generateLocalMockResponse('');
+          const { profile, overrides } = await getStorageData();
+          if (isMinimized === null) isMinimized = true;
+          await loadVoiceSettings();
+          renderUI(analysisData, profile, overrides);
+        }
         return;
       }
     }
@@ -2850,37 +2972,49 @@
       return;
     }
 
-    // Check if the current page is a Signup, Checkout, or Legal page
-    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
-      // Silent analysis complete! Toolbar badge is updated in background.js, do not inject overlay.
-      return;
-    }
-
+    // Auto-popup: terms were found and unanswered risks exist, so show the overlay on any page.
     await loadVoiceSettings();
     renderUI(analysisData, profile, overrides);
 
     // Chrome only allows speech after user activation on the page, so this may stay silent
-    if (voiceAutoRead && voiceOn()) readAllAloud();
+    if (voiceAutoRead && voiceSupported()) readAllAloud();
   }
 
   // Read-only State Rendering: Listen for background worker's broadcast of validated analysis
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       if (message?.action === 'TAB_ANALYSIS_FINALIZED' && message.result) {
         handleFinalizedAnalysis(message.result);
+      }
+      if (message?.action === 'ALWAYS_SHOW_WIDGET_CHANGED') {
+        const alwaysShow = Boolean(message.enabled);
+        if (alwaysShow) {
+          isDismissedForSession = false;
+          isMinimized = false;
+        }
+        if (!analysisData) {
+          analysisData = generateLocalMockResponse('');
+        }
+        const { profile, overrides } = await getStorageData();
+        renderUI(analysisData, profile, overrides);
       }
     });
   }
 
   // Dynamic Storage Listener: Re-render UI when always-show widget setting or overrides change
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
+    chrome.storage.onChanged.addListener(async (changes, areaName) => {
       if (areaName === 'local' && (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] || changes[STORAGE_KEYS.SITE_OVERRIDES])) {
-        if (analysisData) {
-          getStorageData().then(({ profile, overrides }) => {
-            renderUI(analysisData, profile, overrides);
-          });
+        const alwaysShow = await getAlwaysShowWidgetSetting();
+        if (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] && alwaysShow) {
+          isDismissedForSession = false;
+          isMinimized = false;
         }
+        if (!analysisData) {
+          analysisData = generateLocalMockResponse('');
+        }
+        const { profile, overrides } = await getStorageData();
+        renderUI(analysisData, profile, overrides);
       }
     });
   }
@@ -2913,13 +3047,14 @@
       return;
     }
 
-    // Check if the current page is a Signup, Checkout, or Legal page
-    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
-      return;
-    }
-
+    await loadVoiceSettings();
     renderUI(normalized, profile, overrides);
   }
+  // Stop any speech when leaving the page
+  window.addEventListener('pagehide', () => {
+    stopTtsAudio();
+    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  });
 
   // Apply voice settings changed from the toolbar popup without a page reload
   try {
@@ -2944,12 +3079,6 @@
       });
     }
   } catch (e) { /* ignore */ }
-
-  // Stop any speech when leaving the page
-  window.addEventListener('pagehide', () => {
-    stopTtsAudio();
-    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
-  });
 
   // Run when document is ready
   if (document.readyState === 'loading') {
