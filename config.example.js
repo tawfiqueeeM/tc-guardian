@@ -24,6 +24,10 @@ export const CONFIG = {
   GEMINI_API_KEY: "PASTE_YOUR_GEMINI_API_KEY_HERE",
   GEMINI_MODEL: "gemini-2.5-flash",
 
+  // 5. ElevenLabs text-to-speech (optional; voice falls back to the browser voice)
+  ELEVENLABS_API_KEY: "PASTE_YOUR_ELEVENLABS_API_KEY_HERE",
+  ELEVENLABS_VOICE_ID: "PASTE_YOUR_ELEVENLABS_VOICE_ID_HERE",
+
   // Tier 1 ToS;DR timeout (ms)
   TOSDR_TIMEOUT_MS: 2000
 };
