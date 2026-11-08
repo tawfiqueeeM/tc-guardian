@@ -42,32 +42,42 @@ function createEmptyData() {
       present: false,
       summary: 'No explicit clauses found indicating commercial sale to third-party data brokers.',
       shortSummary: 'No data sale clauses detected.',
-      snippet: ''
+      snippet: '',
+      optOutSteps: [],
+      optOutLink: null
     },
     AI_TRAINING: {
       present: false,
       summary: 'No explicit clauses found authorizing AI model training on user uploads or data.',
       shortSummary: 'No AI training clauses detected.',
-      snippet: ''
+      snippet: '',
+      optOutSteps: [],
+      optOutLink: null
     },
     AUTO_RENEW: {
       present: false,
       summary: 'No automatic renewal or non-refundable billing terms detected.',
       shortSummary: 'No auto-renewal clauses detected.',
       snippet: '',
-      cancellationGuide: null
+      cancellationGuide: null,
+      optOutSteps: [],
+      optOutLink: null
     },
     NO_DELETE: {
       present: false,
       summary: 'No clauses found indicating indefinite data retention following account deletion.',
       shortSummary: 'No indefinite retention clauses detected.',
-      snippet: ''
+      snippet: '',
+      optOutSteps: [],
+      optOutLink: null
     },
     WAIVE_RIGHTS: {
       present: false,
       summary: 'No mandatory binding arbitration or class action waiver clauses identified.',
       shortSummary: 'No arbitration waiver clauses detected.',
-      snippet: ''
+      snippet: '',
+      optOutSteps: [],
+      optOutLink: null
     }
   };
 }
@@ -288,6 +298,61 @@ function getCancellationGuide(domain = '') {
     url: cleanDomain ? `https://${cleanDomain}` : null,
     steps: defaultGuide.steps
   };
+}
+
+/**
+ * Generic Opt-Out & Resolution Guidance for Medium & High-Risk Categories
+ */
+function getGenericOptOutGuide(category, domain = '') {
+  const cleanDomain = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+  if (category === 'DATA_SALE') {
+    return {
+      steps: [
+        'Visit the site\'s Privacy Settings or footer and select "Do Not Sell My Info" or "Cookie Preferences".',
+        'Toggle off third-party ad targeting, data sharing, and behavioral tracking.',
+        'Submit a formal CCPA/GDPR opt-out request through their privacy webform or email.'
+      ],
+      optOutLink: cleanDomain ? `https://${cleanDomain}` : null
+    };
+  }
+  if (category === 'AI_TRAINING') {
+    return {
+      steps: [
+        'Open your Account Settings or Privacy / Data Controls dashboard.',
+        'Locate "Model Improvement", "AI Training", or "Content Permissions".',
+        'Turn off the toggle allowing your prompts, files, or uploaded data to train artificial intelligence models.'
+      ],
+      optOutLink: cleanDomain ? `https://${cleanDomain}` : null
+    };
+  }
+  if (category === 'AUTO_RENEW') {
+    const guide = getCancellationGuide(domain);
+    return {
+      steps: guide.steps,
+      optOutLink: guide.url
+    };
+  }
+  if (category === 'WAIVE_RIGHTS') {
+    return {
+      steps: [
+        'Review the Arbitration section in the terms for an opt-out deadline (typically 30 days from sign-up).',
+        'Draft a brief written notice stating your name, account identifier, and explicit rejection of the arbitration clause.',
+        'Send the opt-out notice via email or certified mail to the company\'s designated legal notice address.'
+      ],
+      optOutLink: null
+    };
+  }
+  if (category === 'NO_DELETE') {
+    return {
+      steps: [
+        'Contact customer support or the Data Protection Officer requesting total account erasure.',
+        'Cite your right to deletion under GDPR (Article 17) or CCPA where applicable.',
+        'Request written confirmation once persistent records and backup archives are purged.'
+      ],
+      optOutLink: null
+    };
+  }
+  return { steps: [], optOutLink: null };
 }
 
 /**
@@ -659,11 +724,14 @@ function generateGuaranteedFallback(engineLabel = 'Fallback Detection', sourceTe
       const rawSnippet = extractCategorySnippet(sourceText, k);
       const snippet = truncateSnippet(rawSnippet, 250);
       const shortSummary = formatShortSummary('', k, true, rawSnippet);
+      const guide = getGenericOptOutGuide(k, domain);
       data[k] = {
         present: true,
         summary: `Fallback detection: ${k.replace('_', ' ').toLowerCase()} clause detected in agreement requiring explicit user choice.`,
         shortSummary: shortSummary,
-        snippet: snippet
+        snippet: snippet,
+        optOutSteps: guide.steps,
+        optOutLink: guide.optOutLink
       };
       if (k === 'AUTO_RENEW') {
         data[k].cancellationGuide = getCancellationGuide(domain);
@@ -674,7 +742,9 @@ function generateGuaranteedFallback(engineLabel = 'Fallback Detection', sourceTe
         present: false,
         summary: `No risk clause detected in agreement terms for this category.${docNote}`,
         shortSummary: 'No risk clause detected.',
-        snippet: ''
+        snippet: '',
+        optOutSteps: [],
+        optOutLink: null
       };
       if (k === 'AUTO_RENEW') {
         data[k].cancellationGuide = null;
@@ -835,17 +905,18 @@ Analyze the legal clauses below against these 5 red flags:
 CRITICAL DYNAMIC DETECTION INSTRUCTIONS:
 - You must evaluate each category strictly based on the provided text.
 - Set "present": true ONLY if an unfavorable or high-risk clause matching that category is genuinely present in the text, and extract a short quote in "snippet".
-- If a category is NOT mentioned in the text, or if the text is clean/favorable for that category, set "present": false, summary: "No risk clause detected in agreement.", and snippet: "".
+- For EVERY flagged Medium and High-risk category (DATA_SALE, AI_TRAINING, AUTO_RENEW, WAIVE_RIGHTS), if "present" is true, extract step-by-step resolution instructions in an "optOutSteps" array (e.g. how the user can opt-out of data sales, toggle off AI training, cancel recurring billing, or send an arbitration opt-out notice) and any direct resolution URL in "optOutLink" (valid https:// URL if found in the text, otherwise null).
+- If a category is NOT mentioned in the text, or if the text is clean/favorable for that category, set "present": false, summary: "No risk clause detected in agreement.", snippet: "", optOutSteps: [], and optOutLink: null.
 - For open-source, educational, or documentation sites (e.g. Creative Commons, Wikipedia, MDN), default categories to present: false unless explicit monetization/arbitration is present.
 - Do NOT assume or hallucinate risk. Keep the count variable per website.
 
 Respond ONLY with valid JSON matching this exact structure:
 {
-  "DATA_SALE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "AI_TRAINING": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "AUTO_RENEW": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "NO_DELETE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "WAIVE_RIGHTS": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" }
+  "DATA_SALE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" },
+  "AI_TRAINING": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" },
+  "AUTO_RENEW": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" },
+  "NO_DELETE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": [], "optOutLink": null },
+  "WAIVE_RIGHTS": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "1-2 sentence explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" }
 }
 
 Terms to analyze:
@@ -884,17 +955,18 @@ Analyze the provided text against these 5 specific categories:
 CRITICAL DYNAMIC DETECTION INSTRUCTIONS:
 - You must evaluate each category strictly based on the provided text.
 - Set "present": true ONLY if an unfavorable or high-risk clause matching that category is genuinely present in the text, and extract the exact quote in "snippet".
-- If a category is NOT mentioned, absent, or if the terms do not contain that risk, set "present": false, summary: "No risk clause detected in agreement.", and snippet: "".
+- For EVERY flagged Medium and High-risk category (DATA_SALE, AI_TRAINING, AUTO_RENEW, WAIVE_RIGHTS), if "present" is true, extract step-by-step resolution instructions in an "optOutSteps" array (e.g. how the user can opt-out of data sales, toggle off AI training, cancel recurring billing, or send an arbitration opt-out notice) and any direct resolution URL in "optOutLink" (valid https:// URL if found in the text, otherwise null).
+- If a category is NOT mentioned, absent, or if the terms do not contain that risk, set "present": false, summary: "No risk clause detected in agreement.", snippet: "", optOutSteps: [], and optOutLink: null.
 - For open-source, educational, or documentation sites (e.g. Creative Commons, Wikipedia, MDN), default categories to present: false unless explicit monetization/arbitration is present.
 - Keep the response truly dynamic: a website with only 1 or 2 risks must only have those categories set to "present": true.
 
 Respond ONLY with a valid JSON object strictly adhering to this schema without markdown or formatting:
 {
-  "DATA_SALE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "AI_TRAINING": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "AUTO_RENEW": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "NO_DELETE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" },
-  "WAIVE_RIGHTS": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''" }
+  "DATA_SALE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" },
+  "AI_TRAINING": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" },
+  "AUTO_RENEW": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" },
+  "NO_DELETE": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": [], "optOutLink": null },
+  "WAIVE_RIGHTS": { "present": boolean, "shortSummary": "concise 1-2 sentence plain-English summary under 150 chars if present, or 'No risk clause detected'", "summary": "plain English explanation", "snippet": "exact quote from text (max 250 chars) if present, else ''", "optOutSteps": ["step 1", "step 2"], "optOutLink": "https://... or null" }
 }`;
 
 function isKeyConfigured(key) {
@@ -1166,11 +1238,21 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
       const rawSummary = String(raw[k].summary || raw[k].shortSummary || 'Risk clause detected in terms.');
       const shortSummary = formatShortSummary(raw[k].shortSummary || rawSummary, k, true, rawSnippet);
 
+      const fallbackGuide = getGenericOptOutGuide(k, domain);
+      const optOutSteps = (Array.isArray(raw[k]?.optOutSteps) && raw[k].optOutSteps.length > 0)
+        ? raw[k].optOutSteps.map((s) => String(s).trim()).filter(Boolean)
+        : (raw[k]?.cancellationGuide?.steps || fallbackGuide.steps);
+      const optOutLink = (typeof raw[k]?.optOutLink === 'string' && /^https:\/\//i.test(raw[k].optOutLink.trim()))
+        ? raw[k].optOutLink.trim()
+        : (raw[k]?.cancellationGuide?.url || fallbackGuide.optOutLink);
+
       base[k] = {
         present: true,
         summary: rawSummary,
         shortSummary: shortSummary,
-        snippet: finalSnippet
+        snippet: finalSnippet,
+        optOutSteps: optOutSteps,
+        optOutLink: optOutLink
       };
       if (k === 'AUTO_RENEW') {
         base[k].cancellationGuide = raw[k]?.cancellationGuide || getCancellationGuide(domain);
@@ -1181,7 +1263,9 @@ function validateAndNormalizeData(raw, sourceText = '', domain = '') {
         present: false,
         summary: String(raw[k].summary || `No risk clause detected in agreement terms.${docNote}`),
         shortSummary: 'No risk clause detected.',
-        snippet: ''
+        snippet: '',
+        optOutSteps: [],
+        optOutLink: null
       };
       if (k === 'AUTO_RENEW') {
         base[k].cancellationGuide = null;
@@ -1315,20 +1399,27 @@ async function setActiveScanId(tabId, scanId) {
 function computeOverallRisk(data) {
   if (!data) return { level: 'CLEAN', count: 0 };
   let count = 0;
-  if (data.DATA_SALE?.present) count++;
-  if (data.AI_TRAINING?.present) count++;
-  if (data.AUTO_RENEW?.present) count++;
-  if (data.NO_DELETE?.present) count++;
-  if (data.WAIVE_RIGHTS?.present) count++;
+  // Threat count for the toolbar badge ONLY counts risks where present === true AND acknowledged !== true
+  const isUnack = (cat) => Boolean(cat?.present && cat?.acknowledged !== true);
+
+  if (isUnack(data.DATA_SALE)) count++;
+  if (isUnack(data.AI_TRAINING)) count++;
+  if (isUnack(data.AUTO_RENEW)) count++;
+  if (isUnack(data.NO_DELETE)) count++;
+  if (isUnack(data.WAIVE_RIGHTS)) count++;
+
+  if (count === 0) {
+    return { level: 'CLEAN', count: 0 };
+  }
 
   let level = 'CLEAN';
   // High Risk (Dealbreakers): DATA_SALE, WAIVE_RIGHTS
-  if (data.DATA_SALE?.present || data.WAIVE_RIGHTS?.present) {
+  if (isUnack(data.DATA_SALE) || isUnack(data.WAIVE_RIGHTS)) {
     level = 'HIGH';
-  } else if (data.AI_TRAINING?.present || data.AUTO_RENEW?.present) {
+  } else if (isUnack(data.AI_TRAINING) || isUnack(data.AUTO_RENEW)) {
     // Medium Risk: AI_TRAINING, AUTO_RENEW
     level = 'MEDIUM';
-  } else if (data.NO_DELETE?.present) {
+  } else if (isUnack(data.NO_DELETE)) {
     // Low Risk: NO_DELETE
     level = 'LOW';
   }
@@ -1476,7 +1567,62 @@ async function finalizeScan(tabId, scanId, result, context = {}) {
     }
   }
 
-  // 3. Compute overall risk & severity
+  // Domain Persistence: Asynchronously fetch user's saved historical choices for the current domain
+  if (status === 'SUCCESS' && data) {
+    try {
+      const storedOverrides = await new Promise((resolve) => {
+        if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+          chrome.storage.local.get(['tc_guardian_siteOverrides'], (res) => {
+            resolve(res?.tc_guardian_siteOverrides || {});
+          });
+        } else {
+          resolve({});
+        }
+      });
+
+      const hostCandidates = new Set();
+      const addHost = (raw) => {
+        if (!raw) return;
+        try {
+          const u = new URL(raw);
+          hostCandidates.add(u.hostname);
+          hostCandidates.add(u.hostname.replace(/^www\./, ''));
+        } catch {
+          const clean = String(raw).replace(/^www\./, '').split('/')[0].split('?')[0].trim();
+          if (clean) {
+            hostCandidates.add(clean);
+            hostCandidates.add('www.' + clean);
+          }
+        }
+      };
+
+      addHost(context.url);
+      addHost(url);
+      addHost(context.domain);
+      addHost(domain);
+
+      let domainChoices = null;
+      for (const host of hostCandidates) {
+        if (storedOverrides[host]) {
+          domainChoices = storedOverrides[host];
+          break;
+        }
+      }
+
+      // If a risk category has a saved choice for this domain, append acknowledged: true
+      if (domainChoices && typeof domainChoices === 'object') {
+        for (const catKey of Object.keys(data)) {
+          if (Object.prototype.hasOwnProperty.call(domainChoices, catKey)) {
+            data[catKey].acknowledged = true;
+          }
+        }
+      }
+    } catch (persistErr) {
+      console.warn('[T&C Guardian] Domain persistence check failed:', persistErr);
+    }
+  }
+
+  // 3. Compute overall risk & severity (ONLY counting unacknowledged risks)
   let riskLevel = 'UNANALYZED';
   let riskCount = 0;
 

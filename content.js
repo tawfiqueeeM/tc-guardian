@@ -766,6 +766,43 @@
     };
   }
 
+  function getFallbackResolutionSteps(catKey, domain = '') {
+    const cleanDomain = String(domain || currentDomain || '').toLowerCase().replace(/^www\./, '');
+    if (catKey === 'DATA_SALE') {
+      return [
+        'Visit the site\'s Privacy Settings or footer and select "Do Not Sell My Info" or "Cookie Preferences".',
+        'Toggle off third-party ad targeting, data sharing, and behavioral tracking.',
+        'Submit a formal CCPA/GDPR opt-out request through their privacy webform or email.'
+      ];
+    }
+    if (catKey === 'AI_TRAINING') {
+      return [
+        'Open your Account Settings or Privacy / Data Controls dashboard.',
+        'Locate "Model Improvement", "AI Training", or "Content Permissions".',
+        'Turn off the toggle allowing your prompts, files, or uploaded data to train artificial intelligence models.'
+      ];
+    }
+    if (catKey === 'AUTO_RENEW') {
+      const guide = getDefaultCancellationGuide(domain);
+      return guide.steps;
+    }
+    if (catKey === 'WAIVE_RIGHTS') {
+      return [
+        'Review the Arbitration section in the terms for an opt-out deadline (typically 30 days from sign-up).',
+        'Draft a brief written notice stating your name, account identifier, and explicit rejection of the arbitration clause.',
+        'Send the opt-out notice via email or certified mail to the company\'s designated legal notice address.'
+      ];
+    }
+    if (catKey === 'NO_DELETE') {
+      return [
+        'Contact customer support or the Data Protection Officer requesting total account erasure.',
+        'Cite your right to deletion under GDPR (Article 17) or CCPA where applicable.',
+        'Request written confirmation once persistent records and backup archives are purged.'
+      ];
+    }
+    return [];
+  }
+
   function generateLocalMockResponse(text) {
     // Negation-aware keyword detection to prevent false positives (e.g., "do not sell", "never sell")
     const checkUnnegated = (pattern) => {
@@ -1321,6 +1358,95 @@
         word-break: break-word;
       }
 
+      /* Resolution Guide UI (Native <details> and <summary>) */
+      details.tc-resolution-guide {
+        margin-top: 8px;
+        margin-bottom: 12px;
+        border-top: 1px dashed rgba(0, 0, 0, 0.08);
+        padding-top: 8px;
+      }
+
+      details.tc-resolution-guide summary {
+        list-style: none;
+        cursor: pointer;
+        color: #d97706;
+        font-size: 11.5px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+
+      details.tc-resolution-guide summary::-webkit-details-marker {
+        display: none;
+      }
+
+      details.tc-resolution-guide summary::after {
+        content: '▸';
+        font-size: 10px;
+        color: #d97706;
+        transition: transform 0.2s ease;
+      }
+
+      details.tc-resolution-guide[open] > summary::after {
+        transform: rotate(90deg);
+      }
+
+      details.tc-resolution-guide summary:hover {
+        background: #fef3c7;
+        color: #b45309;
+      }
+
+      details.tc-resolution-guide .tc-resolution-content {
+        margin-top: 8px;
+        padding: 10px 12px;
+        background: #ffffff;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        font-size: 11.5px;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      details.tc-resolution-guide ol.tc-resolution-steps {
+        margin: 0;
+        padding-left: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      details.tc-resolution-guide ol.tc-resolution-steps li {
+        color: #334155;
+      }
+
+      .tc-resolution-link-wrapper {
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px dashed #e2e8f0;
+      }
+
+      .tc-resolution-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: #2563eb;
+        font-weight: 600;
+        font-size: 11px;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      .tc-resolution-link:hover {
+        color: #1d4ed8;
+      }
+
       /* Action Buttons: Soft Rounded Aesthetic */
       .tc-btn-view-clause,
       .tc-view-btn {
@@ -1822,6 +1948,27 @@
       return;
     }
 
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+
+    // Silent Memory: Only consider categories where present === true AND acknowledged !== true
+    const unacknowledgedActiveCategories = CATEGORIES.filter((catKey) => {
+      const catData = analysis?.categories?.[catKey];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, catKey);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    });
+
+    // If total number of unacknowledged active risks is 0, do not inject, render, or show at all
+    if (unacknowledgedActiveCategories.length === 0) {
+      if (shadowRoot) {
+        shadowRoot.innerHTML = '';
+      }
+      const host = document.getElementById('tc-guardian-host');
+      if (host) {
+        host.style.display = 'none';
+      }
+      return;
+    }
+
     const root = ensureShadowRoot();
     const mascotFileName = getHighestRiskMascotFileName(analysis);
     const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
@@ -1831,13 +1978,11 @@
     if (isMinimized) {
       // Count dealbreakers
       let dealbreakerCount = 0;
-      CATEGORIES.forEach((catKey) => {
-        if (analysis && analysis.categories && analysis.categories[catKey] && analysis.categories[catKey].present === true) {
-          const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
-          const no = Number(catStats.no) || 0;
-          const total = Number(catStats.yes || 0) + no;
-          if (total > 0 && no >= 2 && (no / total) >= 0.60) dealbreakerCount++;
-        }
+      unacknowledgedActiveCategories.forEach((catKey) => {
+        const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
+        const no = Number(catStats.no) || 0;
+        const total = Number(catStats.yes || 0) + no;
+        if (total > 0 && no >= 2 && (no / total) >= 0.60) dealbreakerCount++;
       });
 
       root.innerHTML = `
@@ -1876,20 +2021,13 @@
       return;
     }
 
-    // Conditional Filtering: Only create and render cards where present === true
-    const presentCategories = CATEGORIES.filter(
-      (catKey) => Boolean(analysis && analysis.categories && analysis.categories[catKey] && analysis.categories[catKey].present === true)
-    );
-
-    // Strictly sort the injected risk cards by severity: High-risk first, Medium-risk second, Low-risk last
+    // Strictly sort the unacknowledged risk cards by severity: High-risk first, Medium-risk second, Low-risk last
     const severityRank = { HIGH: 1, MEDIUM: 2, LOW: 3 };
-    const sortedCategories = [...presentCategories].sort((a, b) => {
+    const sortedCategories = [...unacknowledgedActiveCategories].sort((a, b) => {
       const rankA = severityRank[CATEGORY_META[a]?.riskLevel] || 2;
       const rankB = severityRank[CATEGORY_META[b]?.riskLevel] || 2;
       return rankA - rankB;
     });
-
-    const domainOverrides = (overrides && overrides[currentDomain]) || {};
 
     let dealbreakerCount = 0;
     const categoryCardsHtml = sortedCategories.map((catKey) => {
@@ -1919,37 +2057,37 @@
       const shortSummaryText = data.shortSummary || data.summary || meta.defaultSummary;
       const riskClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
 
-      // How to Stop Auto-Pay Guide (with numbered steps) if AUTO_RENEW is present
-      let cancellationGuideHtml = '';
-      if (catKey === 'AUTO_RENEW') {
-        const guide = data.cancellationGuide || getDefaultCancellationGuide(currentDomain);
-        if (guide && Array.isArray(guide.steps) && guide.steps.length > 0) {
-          const rawUrl = typeof guide.url === 'string' ? guide.url.trim() : '';
-          const isSecureUrl = /^https:\/\//i.test(rawUrl);
+      // Resolution Guide UI: If a risk contains optOutSteps (or falls under Medium/High severity with steps available)
+      let resolutionGuideHtml = '';
+      const fallbackSteps = getFallbackResolutionSteps(catKey, currentDomain);
+      const steps = (Array.isArray(data.optOutSteps) && data.optOutSteps.length > 0)
+        ? data.optOutSteps
+        : ((catKey === 'AUTO_RENEW' && data.cancellationGuide?.steps) || fallbackSteps);
 
-          cancellationGuideHtml = `
-            <div class="tc-cancel-guide-panel">
-              <div class="tc-cancel-guide-header">
-                <span>💡 How to Stop Auto-Pay</span>
-              </div>
-              <div class="tc-cancel-steps-list">
-                ${guide.steps.map((step, idx) => `
-                  <div class="tc-cancel-step-item">
-                    <span class="tc-step-num-badge">${idx + 1}</span>
-                    <span class="tc-step-text">${escapeHtml(step)}</span>
-                  </div>
-                `).join('')}
-              </div>
-              ${isSecureUrl ? `
-                <a class="tc-cancel-guide-link" href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener noreferrer">
-                  <span>Open billing settings</span>
-                  <span>↗</span>
-                </a>
+      const rawOptOutLink = (typeof data.optOutLink === 'string' && data.optOutLink.trim())
+        ? data.optOutLink.trim()
+        : ((catKey === 'AUTO_RENEW' && typeof data.cancellationGuide?.url === 'string') ? data.cancellationGuide.url.trim() : '');
+      const isSecureOptOutLink = /^https:\/\//i.test(rawOptOutLink);
+
+      if (Array.isArray(steps) && steps.length > 0 && (meta.riskLevel === 'HIGH' || meta.riskLevel === 'MEDIUM' || (Array.isArray(data.optOutSteps) && data.optOutSteps.length > 0))) {
+        resolutionGuideHtml = `
+          <details class="tc-resolution-guide">
+            <summary>How to solve this</summary>
+            <div class="tc-resolution-content">
+              <ol class="tc-resolution-steps">
+                ${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}
+              </ol>
+              ${isSecureOptOutLink ? `
+                <div class="tc-resolution-link-wrapper">
+                  <a class="tc-resolution-link" href="${escapeHtml(rawOptOutLink)}" target="_blank" rel="noopener noreferrer">
+                    <span>Direct Resolution Link</span>
+                    <span>↗</span>
+                  </a>
+                </div>
               ` : ''}
-              <div class="tc-cancel-guide-note">${escapeHtml(guide.domain || currentDomain)} subscription management</div>
             </div>
-          `;
-        }
+          </details>
+        `;
       }
 
       return `
@@ -1983,15 +2121,15 @@
             </details>
           ` : ''}
 
-          <!-- How to Stop Auto-Pay guide if AUTO_RENEW is present -->
-          ${cancellationGuideHtml}
+          <!-- Resolution / Opt-Out Guide for Medium and High Risk alerts -->
+          ${resolutionGuideHtml}
 
           <div class="tc-card-actions">
             <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
-              ${isCurrentYes ? '✓ ' : ''}[ Yes ]
+              ${isCurrentYes ? '✓ ' : ''}Yes
             </button>
             <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no" title="Reject this clause">
-              ${isCurrentNo ? '✕ ' : ''}[ No ]
+              ${isCurrentNo ? '✕ ' : ''}No
             </button>
           </div>
         </div>
@@ -2208,10 +2346,21 @@
 
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
 
-    // Only surface the pop-up when at least one red flag is active
-    const hasFlags = CATEGORIES.some((c) => analysisData && analysisData.categories && analysisData.categories[c] && analysisData.categories[c].present === true);
-    if (!hasFlags) return;
+    // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
+    const unackCount = CATEGORIES.filter((c) => {
+      const catData = analysisData && analysisData.categories && analysisData.categories[c];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, c);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    }).length;
+
+    if (unackCount === 0) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) shadowRoot.innerHTML = '';
+      return;
+    }
 
     // Check if the current page is a Signup, Checkout, or Legal page
     if (!isSignupCheckoutOrLegalPage()) {
@@ -2241,17 +2390,28 @@
     const normalized = normalizeAnalysisResult(finalizedResult);
     analysisData = normalized;
 
+    const { profile, overrides } = await getStorageData();
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+
+    // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
+    const unackCount = CATEGORIES.filter((c) => {
+      const catData = normalized.categories?.[c];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, c);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    }).length;
+
+    if (unackCount === 0) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) shadowRoot.innerHTML = '';
+      return;
+    }
+
     // Check if the current page is a Signup, Checkout, or Legal page
     if (!isSignupCheckoutOrLegalPage()) {
       return;
     }
 
-    const hasFlags = CATEGORIES.some((c) => normalized.categories?.[c]?.present === true);
-    if (!hasFlags) {
-      return;
-    }
-
-    const { profile, overrides } = await getStorageData();
     renderUI(normalized, profile, overrides);
   }
 
