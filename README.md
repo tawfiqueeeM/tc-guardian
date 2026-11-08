@@ -31,71 +31,87 @@ T&C Guardian evaluates every agreement against **5 high-impact risk categories**
 
 ---
 
-## ✨ Key Features
+## 📦 How to Install (Step-by-Step)
 
-### 1. In-Page Floating Assistant (Shadow DOM)
-- **Automatic Detection**: Detects registration, signup, and checkout flows and pre-fetches linked terms in the background.
-- **Isolated Shadow DOM**: Injected safely into the page with a dedicated Shadow Root (`#tc-guardian-host`) so host page CSS never breaks the UI.
-- **Plain-English Summaries**: Replaces legalese with concise 1–2 sentence breakdowns.
-- **Original Clause Inspection**: An expandable accordion (`📖 View Clause`) showing the exact snippet quoted from the contract, with jump-to-page-location links.
-- **Interactive Multi-Question Answering**: Click **Yes** (accept) or **No** (reject) on individual risks. Cards animate and fade away as you answer.
-- **Mascot Bubble**: Collapse the widget into an unobtrusive floating bubble (`.tc-bubble`) with a manual minimize button (`−`) or dismiss it with (`×`).
+T&C Guardian runs on Google Chrome, Brave, Microsoft Edge, Opera, or any Chromium-based browser:
 
-### 2. 🔊 Voice Assistant & Hands-Free Answering
-- **Dual Engine Voice**: Automatically uses natural, high-fidelity voices (ElevenLabs) with a seamless fallback to your browser's native `SpeechSynthesis`.
-- **Read Aloud**: Click the **🔊** icon in the header or next to any clause to listen hands-free.
-- **Voice Answering**: Click the microphone icon **🎤** and speak naturally (`"Yes"`, `"No"`, or `"Skip"`).
-- **In-Page Voice Controls**: Adjust speech speed and choose your preferred browser voice on the fly via the in-widget `⚙️` settings button.
+### Step 1: Download or Clone the Repository
+Clone the repository using Git:
+```bash
+git clone https://github.com/tawfiqueeeM/tc-guardian.git
+cd tc-guardian
+```
+*(Or download the ZIP from GitHub and extract it to a folder on your computer).*
 
-### 3. 🧠 Preference Learning & Dealbreaker Detection
-- **Explicit-Choice Model**: The extension never makes assumptions or automatically accepts terms on your behalf.
-- **Dealbreaker Warning**: If you historically reject a specific risk (e.g. rejecting AI training $\ge 2$ times with a $\ge 60\%$ rejection rate), future occurrences are flagged as a **Dealbreaker** with a prominent warning banner (`🚨 Caution: Agreement contains terms you routinely reject!`) and badge indicators.
-- **Per-Site Memory**: Automatically remembers your choices per domain, so you aren't asked about the same clauses twice.
+### Step 2: Open Extensions in Your Browser
+- In Google Chrome, type `chrome://extensions` in the address bar and press Enter.
+- In Brave, navigate to `brave://extensions`.
+- In Edge, navigate to `edge://extensions`.
 
-### 4. 🧭 Toolbar Extension Dashboard
-- **Dynamic Shield Icon**: Toolbar mascot icon updates dynamically:
-  - 🔴 **Red** (`icons/guardian-high-risk.png`): High-risk clauses detected (`DATA_SALE` or `WAIVE_RIGHTS`).
-  - 🟡 **Amber** (`icons/guardian-medium-risk.png`): Medium-risk clauses detected (`AI_TRAINING` or `AUTO_RENEW`).
-  - 🟢 **Green** (`icons/guardian-low-risk.png`): Safe, clean, or low-risk agreement.
-- **OffscreenCanvas Badges**: Renders a custom badge indicator showing the active unacknowledged threat count.
-- **Accordion Findings**: Expandable cards with opt-out guides and direct resolution links.
-- **Preferences Tab**: View your historical voting profile across all categories and manage per-site overrides.
-- **Settings Screen**: Dedicated pastel settings view with:
-  - *"Always show widget on page (even if clean or answered)"* toggle.
-  - Full voice assistant configuration (Voice engine, browser voice, speech rate, auto-read).
-  - *"Reset All Saved Answers"* button to wipe stored site overrides.
+### Step 3: Enable Developer Mode
+- In the top-right corner of the Extensions page, toggle the **Developer mode** switch **ON**.
 
-### 5. ⚡ Multi-Tiered AI Architecture
-1. **Tier 1 — Cloud AI Ring**: Iterates through high-speed LLM providers (`Cerebras` $\rightarrow$ `Groq` $\rightarrow$ `OpenRouter` $\rightarrow$ `Gemini Flash`) using strict JSON schema validation.
-2. **Tier 2 — ToS;DR Database**: Queries `https://api.tosdr.org` for established community ratings and clause points.
-3. **Tier 3 — Local Browser AI**: Leverages on-device Gemini Nano via `window.ai` / Chromium Prompt API when available.
-4. **Tier 4 — Local Keyword Heuristics**: Runs 100% locally on your machine with negation-aware regex matchers (e.g. distinguishing *"we do not sell"* from *"we sell"*). Guarantees instant offline analysis with zero network dependency.
+### Step 4: Load the Unpacked Extension
+- Click the **"Load unpacked"** button in the top-left corner.
+- In the folder picker, select the `tc-guardian` folder (the directory containing `manifest.json`).
+- You will see the **T&C Guardian** extension card appear in your extensions list!
+
+### Step 5: Pin the Extension Icon
+- Click the puzzle piece icon (🧩) in your Chrome toolbar.
+- Click the pin icon (📌) next to **T&C Guardian** so the shield mascot icon is always visible in your toolbar.
+
+### Step 6: Enable File URLs *(Crucial for Testing Local HTML Files)*
+If you want to test the extension with local HTML files (like the included `test-signup.html`):
+1. On the `chrome://extensions` page, click **Details** on the T&C Guardian card.
+2. Scroll down to **"Allow access to file URLs"** and toggle it **ON**.
+*(Chrome disables extension access to `file:///` URLs by default for security; enabling this allows the extension to inspect local test files).*
 
 ---
 
-## 🚀 Installation & Local Setup
+## 💡 How to Use the Extension (User Guide)
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/tawfiqueeeM/tc-guardian.git
-   cd tc-guardian
-   ```
+Once installed, T&C Guardian works seamlessly without requiring any manual setup. Here is how to use its core features during everyday browsing:
 
-2. **Configure API Keys (Optional)**:
-   - Copy `config.example.js` to `config.js`:
-     ```bash
-     cp config.example.js config.js
-     ```
-   - Add your API keys for Cerebras, Groq, OpenRouter, Gemini, or ElevenLabs if desired. *(The extension works out of the box using Tier 4 local heuristics and browser speech synthesis even without API keys!)*
+### 1. In-Page Floating Assistant on Sign-Up Pages
+- **Automatic Pop-up**: When you visit a registration, checkout, or account creation page (or a page linking to terms), the floating T&C Guardian mascot automatically slides into the top-right corner.
+- **Review Plain-English Summaries**: Each card highlights a specific detected risk in clear language.
+- **Inspect Original Contract Snippets**: Click **"📖 View Clause"** on any card to see the exact text quoted from the agreement, or click **"↗ Jump to page location"** to scroll directly to the clause in the text.
+- **Opt-Out & Cancellation Guides**: If an agreement includes automatic charges or medium/high risks, expand **"How to solve this"** for step-by-step resolution steps and direct settings links.
+- **Accept or Reject Clauses**:
+  - Click **Yes** if you are okay with the clause.
+  - Click **No** if you reject the risk.
+  - Answered cards animate and fade away cleanly.
+- **Minimize to Mascot Bubble**: Click the minimize button (`−`) in the header to collapse the widget into a cute floating bubble (`.tc-bubble`). Clicking the bubble re-expands it anytime.
+- **Dismiss for Session**: Click `×` to hide the widget for the remainder of your current browsing session.
 
-3. **Load the Extension in Chrome**:
-   - Open Chrome and navigate to `chrome://extensions`.
-   - Enable **Developer mode** in the top-right corner.
-   - Click **Load unpacked** and select the `tc-guardian` directory.
+### 2. 🔊 Using the Voice Assistant & Voice Answering
+- **Listen Aloud**: Click the **🔊** icon in the widget header (to read all flagged clauses) or on any individual card to hear it read aloud.
+- **Natural Voice / Browser Fallback**: Uses natural ElevenLabs speech if configured, or automatically falls back to your browser's built-in speech synthesis.
+- **Answer by Voice (Hands-Free)**:
+  1. Click the microphone icon (**🎤**) in the widget header.
+  2. The assistant will read each clause and prompt you: *"Is this risk okay with you?"*.
+  3. Speak naturally: say **"Yes"**, **"No"**, or **"Skip"** to record your choice hands-free.
+- **Voice Settings**: Click the **⚙️** icon in the widget header to change the speech rate (speed slider), select preferred browser voices, or enable auto-read on page load.
 
-4. **Enable File URLs (Important for Local Testing)**:
-   - On the `chrome://extensions` page, click **Details** on the **T&C Guardian** card.
-   - Scroll down and toggle **ON** **"Allow access to file URLs"**. *(Chrome requires this to run content scripts on local HTML files).*
+### 3. 🧠 Personal Preference Learning & Dealbreakers
+- T&C Guardian learns your habits over time based on your explicit votes.
+- If you consistently reject a specific category (e.g. you vote **No** on AI Training $\ge 2$ times with a $\ge 60\%$ rejection rate), the extension flags that category as a **Dealbreaker**.
+- On future sites containing that clause:
+  - The minimized bubble displays a red warning: `(1 ⚠️)`.
+  - Expanding the widget displays the banner: `🚨 Caution: Agreement contains terms you routinely reject!`.
+  - The risk card highlights with a red outline and a `⚠️ Normally Rejected` badge.
+
+### 4. 🧭 Using the Toolbar Popup Dashboard
+Click the T&C Guardian icon in your browser toolbar to open the popup dashboard:
+- **"This Website" Tab**: Shows the live analysis for the active tab, the analysis engine used, and compact accordion cards for each risk.
+- **"Preferences" Tab**:
+  - Displays your historical explicit votes across all 5 risk categories.
+  - Features searchable and removable **Site Overrides** (review or clear individual domain choices).
+  - Contains the **"Always show widget on page (even if clean or answered)"** toggle right at the top.
+- **Settings Screen (`⚙️` Header Icon)**:
+  - Access the widget visibility toggle.
+  - Configure full voice assistant preferences.
+  - Click **"Reset All Saved Answers"** to clear historical votes and start fresh.
 
 ---
 
@@ -138,6 +154,37 @@ You can test the complete suite locally using the included `test-signup.html` an
 1. Click **↺ Reset Storage** in the test panel on the page, or:
 2. Open the extension popup in the toolbar $\rightarrow$ click the **`⚙️` Settings** icon $\rightarrow$ click **"Reset All Saved Answers"**.
 3. Storage is cleared, and all cards reset fresh.
+
+---
+
+## ❓ Frequently Asked Questions (FAQ)
+
+<details>
+<summary><b>Why didn't the in-page widget pop up on a website?</b></summary>
+<br>
+
+There are three normal reasons for this:
+1. **Silent Memory**: If you already answered all risks on that domain, or if the page agreement contains 0 red flags, T&C Guardian remains quiet so it doesn't interrupt your browsing. To see the widget regardless, open the popup, go to **Preferences**, and turn **ON** *"Always show widget on page (even if clean or answered)"*.
+2. **Local File Permissions**: If you opened `test-signup.html` directly from disk (`file:///...`), make sure **"Allow access to file URLs"** is toggled ON under `chrome://extensions` $\rightarrow$ T&C Guardian **Details**.
+3. **Non-Signup Page**: The in-page widget only injects on registration, checkout, or legal pages (`isSignupCheckoutOrLegalPage()`). On regular content pages (like blogs or news), the extension updates the toolbar badge silently without injecting popups.
+</details>
+
+<details>
+<summary><b>Do I need API keys to use T&C Guardian?</b></summary>
+<br>
+
+**No.** T&C Guardian operates with a 4-tier fallback system:
+- It includes a 100% local, on-device keyword heuristic engine that runs instantly with zero API keys or external services.
+- Browser speech synthesis works natively without any cloud keys.
+- Cloud LLM keys (Gemini, Groq, Cerebras, OpenRouter, ElevenLabs) are optional for users who want enhanced natural language synthesis.
+</details>
+
+<details>
+<summary><b>Does T&C Guardian send my personal data or browsing history to external servers?</b></summary>
+<br>
+
+**No.** T&C Guardian does not collect, track, or sell your browsing history. All user preferences, site overrides, and vote counters are stored locally on your device in `chrome.storage.local`. Only the public legal terms text of the page being evaluated is passed to the analysis engine.
+</details>
 
 ---
 
