@@ -2426,6 +2426,10 @@
     }
 
     const root = ensureShadowRoot();
+    const host = document.getElementById('tc-guardian-host');
+    if (host && host.style.display === 'none') {
+      host.style.display = '';
+    }
 
     if (isMinimized) {
       // Count dealbreakers
@@ -2818,6 +2822,65 @@
 
     // Chrome only allows speech after user activation on the page, so this may stay silent
     if (voiceAutoRead && voiceSupported()) readAllAloud();
+  }
+
+  // Read-only State Rendering: Listen for background worker's broadcast of validated analysis
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.action === 'TAB_ANALYSIS_FINALIZED' && message.result) {
+        handleFinalizedAnalysis(message.result);
+      }
+    });
+  }
+
+  // Dynamic Storage Listener: Re-render UI when always-show widget setting or overrides change
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] || changes[STORAGE_KEYS.SITE_OVERRIDES])) {
+        if (analysisData) {
+          getStorageData().then(({ profile, overrides }) => {
+            renderUI(analysisData, profile, overrides);
+          });
+        }
+      }
+    });
+  }
+
+  async function handleFinalizedAnalysis(finalizedResult) {
+    if (isDismissedForSession) {
+      return;
+    }
+    if (!finalizedResult || !finalizedResult.success || !finalizedResult.data) {
+      return;
+    }
+    const normalized = normalizeAnalysisResult(finalizedResult);
+    analysisData = normalized;
+
+    const { profile, overrides } = await getStorageData();
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
+
+    // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
+    const unackCount = CATEGORIES.filter((c) => {
+      const catData = normalized.categories?.[c];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, c);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    }).length;
+
+    if (unackCount === 0 && !alwaysShowWidget) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) shadowRoot.innerHTML = '';
+      return;
+    }
+
+    // Check if the current page is a Signup, Checkout, or Legal page
+    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
+      return;
+    }
+
+    await loadVoiceSettings();
+    renderUI(normalized, profile, overrides);
   }
 
   // Stop any speech when leaving the page
