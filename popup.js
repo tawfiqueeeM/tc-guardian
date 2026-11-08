@@ -315,6 +315,14 @@ async function fetchActiveTab() {
   });
 }
 
+// Scan automatically the first time the popup opens on a page that has no result yet
+let autoScanTried = false;
+function autoScanOnce() {
+  if (autoScanTried) return;
+  autoScanTried = true;
+  triggerActiveTabScan();
+}
+
 async function loadTabAnalysis() {
   if (!activeTabInfo.id || (!activeTabInfo.url.startsWith('http') && !activeTabInfo.url.startsWith('file'))) {
     renderUnanalyzedState(activeTabInfo.domain, 'Non-HTTP page or internal browser tab.');
@@ -330,6 +338,7 @@ async function loadTabAnalysis() {
   }, (res) => {
     if (chrome.runtime.lastError || !res) {
       renderUnanalyzedState(activeTabInfo.domain);
+      autoScanOnce();
       return;
     }
     if (res.status === 'ERROR' || res.riskLevel === 'ERROR' || res.reason === 'POLICY_FETCH_FAILED') {
@@ -338,6 +347,7 @@ async function loadTabAnalysis() {
     }
     if (!res.success || res.status === 'UNANALYZED' || !res.data) {
       renderUnanalyzedState(activeTabInfo.domain);
+      autoScanOnce();
       return;
     }
     renderWebsiteAnalysis(res.data, res.engine, res.domain || activeTabInfo.domain, res.riskLevel, res.policyUrl);
@@ -674,6 +684,10 @@ function renderErrorState(errorMsg = '', domain = '') {
  * Trigger On-Demand Scan of the Active Tab
  */
 async function triggerActiveTabScan() {
+  if (!activeTabInfo.id) {
+    renderUnanalyzedState(activeTabInfo.domain, 'Cannot scan this tab (unsupported tab ID).');
+    return;
+  }
   const btnScan = document.getElementById('btnScanNow');
   const subtext = document.getElementById('heroSubtext');
   if (btnScan) {

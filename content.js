@@ -430,6 +430,11 @@
         if (/^(https?|file):/i.test(a.href)) return a.href;
       }
     }
+    // Second pass: link URL looks like a legal page (e.g. footer "/privacy", "/terms")
+    const urlLike = /\/(?:terms|tos|privacy|legal|eula|conditions)(?:[-_/.?]|$)/i;
+    for (const a of links) {
+      if (/^(https?|file):/i.test(a.href) && urlLike.test(new URL(a.href).pathname)) return a.href;
+    }
     return null;
   }
 
@@ -2050,7 +2055,6 @@
     voiceMode = mode;
     if (notice !== undefined) voiceNotice = notice;
     applyVoiceButtonState();
-    bindSettingsHandlers(root);
   }
 
   function applyVoiceButtonState() {
@@ -2775,27 +2779,31 @@
         const choice = target.getAttribute('data-choice');
         const isYes = (choice === 'yes');
 
-        const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+        if (choiceBusy) return;
+        choiceBusy = true;
+        let currentProfile;
+        let currentOverrides;
+        try {
+          ({ profile: currentProfile, overrides: currentOverrides } = await getStorageData());
+          const prev = currentOverrides[currentDomain] && currentOverrides[currentDomain][catKey];
 
-        // Increment global counter
-        if (!currentProfile[catKey]) {
-          currentProfile[catKey] = { yes: 0, no: 0 };
-        }
-        if (isYes) {
-          currentProfile[catKey].yes = (currentProfile[catKey].yes || 0) + 1;
-        } else {
-          currentProfile[catKey].no = (currentProfile[catKey].no || 0) + 1;
-        }
+          // Counts are updated here only (the background just refreshes the badge).
+          // Changing an answer replaces the earlier vote instead of adding another.
+          if (prev !== isYes) {
+            if (!currentProfile[catKey]) currentProfile[catKey] = { yes: 0, no: 0 };
+            const st = currentProfile[catKey];
+            if (prev === true) st.yes = Math.max(0, (st.yes || 0) - 1);
+            if (prev === false) st.no = Math.max(0, (st.no || 0) - 1);
+            if (isYes) st.yes = (st.yes || 0) + 1; else st.no = (st.no || 0) + 1;
 
-        // Set per-site override for domain
-        if (!currentOverrides[currentDomain]) {
-          currentOverrides[currentDomain] = {};
+            if (!currentOverrides[currentDomain]) currentOverrides[currentDomain] = {};
+            currentOverrides[currentDomain][catKey] = isYes;
+            await saveStorageData(currentProfile, currentOverrides);
+          }
+        } finally {
+          choiceBusy = false;
         }
-        currentOverrides[currentDomain][catKey] = isYes;
-
-        // Save & immediately re-render live
-        await saveStorageData(currentProfile, currentOverrides);
-        // Also notify background worker via SAVE_EXPLICIT_CHOICE
+        // Tell the background so the toolbar badge drops the answered risk
         if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
           try {
             chrome.runtime.sendMessage({
@@ -2803,7 +2811,7 @@
               domain: currentDomain,
               category: catKey,
               isAccepted: isYes
-            });
+            }, () => { void chrome.runtime.lastError; });
           } catch (err) {}
         }
 
@@ -2940,12 +2948,7 @@
       return;
     }
 
-    // Check if the current page is a Signup, Checkout, or Legal page
-    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
-      // Silent analysis complete! Toolbar badge is updated in background.js, do not inject overlay.
-      return;
-    }
-
+    // Auto-popup: terms were found and unanswered risks exist, so show the overlay on any page.
     await loadVoiceSettings();
     renderUI(analysisData, profile, overrides);
 
@@ -3020,11 +3023,6 @@
       return;
     }
 
-    // Check if the current page is a Signup, Checkout, or Legal page
-    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
-      return;
-    }
-
     await loadVoiceSettings();
     renderUI(normalized, profile, overrides);
   }
@@ -3057,12 +3055,6 @@
       });
     }
   } catch (e) { /* ignore */ }
-
-  // Stop any speech when leaving the page
-  window.addEventListener('pagehide', () => {
-    stopTtsAudio();
-    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
-  });
 
   // Run when document is ready
   if (document.readyState === 'loading') {
