@@ -2857,8 +2857,9 @@
         if (new URL(termsUrl).origin === window.location.origin) {
           rawText = await fetchTermsUrl(termsUrl);
           if (rawText) buildClauseRefsFromText(rawText);
-        } else {
-          remoteUrl = termsUrl; // CORS-blocked here; let background.js fetch it
+        }
+        if (!rawText) {
+          remoteUrl = termsUrl; // CORS-blocked or local fetch restricted; let background.js fetch it
         }
       }
     }
