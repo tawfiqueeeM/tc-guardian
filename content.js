@@ -1001,13 +1001,31 @@
       }
 
       .tc-logo-badge {
-        background: #3b82f6;
-        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #f1f5f9;
+        color: #0f172a;
         font-weight: 700;
-        font-size: 11px;
-        padding: 3px 8px;
-        border-radius: 6px;
-        letter-spacing: 0.5px;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        letter-spacing: 0.2px;
+      }
+
+      .tc-header-mascot {
+        width: 18px;
+        height: 18px;
+        object-fit: contain;
+        vertical-align: middle;
+      }
+
+      .tc-bubble-mascot {
+        width: 18px;
+        height: 18px;
+        object-fit: contain;
+        vertical-align: middle;
       }
 
       .tc-title {
@@ -1221,6 +1239,74 @@
         font-family: monospace;
       }
 
+      /* Injected Short Summary Text */
+      .tc-card-short-summary {
+        font-size: 12.5px;
+        color: #334155;
+        line-height: 1.45;
+        margin-bottom: 10px;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+      }
+
+      /* Accessible Clause Details & Summary (Native Elements) */
+      details.tc-clause-details {
+        margin-top: 8px;
+        margin-bottom: 12px;
+        border-top: 1px dashed rgba(0, 0, 0, 0.08);
+        padding-top: 8px;
+      }
+
+      summary.tc-clause-summary {
+        list-style: none;
+        cursor: pointer;
+        color: #0369a1;
+        font-size: 11.5px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+
+      summary.tc-clause-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary.tc-clause-summary::after {
+        content: '▸';
+        font-size: 10px;
+        color: #0369a1;
+        transition: transform 0.2s ease;
+      }
+
+      details.tc-clause-details[open] > summary.tc-clause-summary::after {
+        transform: rotate(90deg);
+      }
+
+      summary.tc-clause-summary:hover {
+        background: #e0f2fe;
+        color: #0284c7;
+      }
+
+      details.tc-clause-details .tc-quote {
+        margin-top: 8px;
+        padding: 8px 12px;
+        background: #f8fafc;
+        border-left: 3px solid #cbd5e1;
+        border-radius: 6px;
+        font-size: 11.5px;
+        color: #475569;
+        font-style: italic;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+
       /* Action Buttons: Soft Rounded Aesthetic */
       .tc-btn-view-clause,
       .tc-view-btn {
@@ -1268,11 +1354,13 @@
         box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
       }
 
+      /* How to Stop Auto-Pay Guide */
       .tc-cancel-guide-panel {
         background: #fffdf5;
         border: 1px solid #fde68a;
         border-radius: 12px;
         padding: 12px 14px;
+        margin-top: 8px;
         margin-bottom: 12px;
         font-size: 12px;
         animation: tc-fade-in 0.2s ease;
@@ -1284,41 +1372,68 @@
         gap: 6px;
         font-weight: 700;
         color: #92400e;
-        margin-bottom: 8px;
-        font-size: 12px;
+        margin-bottom: 10px;
+        font-size: 12.5px;
       }
 
-      .tc-cancel-guide-steps {
-        margin: 0;
-        padding-left: 20px;
-        color: #78350f;
+      .tc-cancel-steps-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .tc-cancel-step-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
         font-size: 11.5px;
-        line-height: 1.55;
+        color: #451a03;
+        line-height: 1.45;
       }
 
-      .tc-cancel-step {
-        margin-bottom: 4px;
+      .tc-step-num-badge {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fef3c7;
+        border: 1px solid #fde68a;
+        color: #b45309;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .tc-step-text {
+        flex: 1;
       }
 
       .tc-cancel-guide-link {
         display: inline-flex;
         align-items: center;
-        gap: 5px;
-        margin-top: 10px;
-        padding: 6px 12px;
-        background: #fef3c7;
-        color: #92400e;
+        justify-content: center;
+        gap: 6px;
+        padding: 7px 12px;
+        background: #f59e0b;
+        color: #0f172a;
         text-decoration: none;
         border-radius: 8px;
-        border: 1px solid #fde68a;
-        font-weight: 600;
+        font-weight: 700;
         font-size: 11.5px;
         transition: all 0.15s ease;
       }
 
       .tc-cancel-guide-link:hover {
-        background: #fde68a;
-        color: #78350f;
+        background: #d97706;
+      }
+
+      .tc-cancel-guide-note {
+        font-size: 10px;
+        color: #92400e;
+        margin-top: 6px;
       }
 
       .tc-source-preview {
@@ -1644,8 +1759,46 @@
     return '<div class="tc-reco tc-reco-pending">Answer each flagged clause to get a recommendation.</div>';
   }
 
+  function getHighestRiskMascot(analysis) {
+    let hasHigh = false;
+    let hasMed = false;
+    let hasLow = false;
+
+    if (analysis && analysis.categories) {
+      CATEGORIES.forEach((catKey) => {
+        if (analysis.categories[catKey]?.present === true) {
+          const level = CATEGORY_META[catKey]?.riskLevel;
+          if (level === 'HIGH') hasHigh = true;
+          else if (level === 'MEDIUM') hasMed = true;
+          else if (level === 'LOW') hasLow = true;
+        }
+      });
+    }
+
+    let fileName = 'icons/guardian-low-risk.png';
+    if (hasHigh) {
+      fileName = 'icons/guardian-high-risk.png';
+    } else if (hasMed) {
+      fileName = 'icons/guardian-medium-risk.png';
+    } else if (hasLow) {
+      fileName = 'icons/guardian-low-risk.png';
+    } else {
+      fileName = 'icons/guardian-neutral.png';
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+      try {
+        return chrome.runtime.getURL(fileName);
+      } catch (e) {
+        return fileName;
+      }
+    }
+    return fileName;
+  }
+
   async function renderUI(analysis, profile, overrides) {
     const root = ensureShadowRoot();
+    const mascotSrc = getHighestRiskMascot(analysis);
 
     if (isMinimized) {
       // Count dealbreakers
@@ -1662,7 +1815,7 @@
       root.innerHTML = `
         <style>${getCSS()}</style>
         <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
-          <span>🛡️</span>
+          <img class="tc-bubble-mascot" src="${escapeHtml(mascotSrc)}" alt="T&C Guardian" />
           <span>T&C Guardian</span>
           ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
         </button>
@@ -1680,24 +1833,25 @@
       (catKey) => Boolean(analysis && analysis.categories && analysis.categories[catKey] && analysis.categories[catKey].present === true)
     );
 
+    // Strictly sort the injected risk cards by severity: High-risk first, Medium-risk second, Low-risk last
+    const severityRank = { HIGH: 1, MEDIUM: 2, LOW: 3 };
+    const sortedCategories = [...presentCategories].sort((a, b) => {
+      const rankA = severityRank[CATEGORY_META[a]?.riskLevel] || 2;
+      const rankB = severityRank[CATEGORY_META[b]?.riskLevel] || 2;
+      return rankA - rankB;
+    });
+
     const domainOverrides = (overrides && overrides[currentDomain]) || {};
 
     let dealbreakerCount = 0;
-    const categoryCardsHtml = presentCategories.map((catKey) => {
+    const categoryCardsHtml = sortedCategories.map((catKey) => {
       const meta = CATEGORY_META[catKey];
-      const data = analysis.categories[catKey];
+      const data = (analysis && analysis.categories && analysis.categories[catKey]) || {};
 
       const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
       const yes = Number(catStats.yes) || 0;
       const no = Number(catStats.no) || 0;
       const total = yes + no;
-
-      // Stat Line: e.g. "Stat: 12.3% Yes"
-      let statText = 'Stat: No history yet';
-      if (total > 0) {
-        const pctYes = ((yes / total) * 100).toFixed(1);
-        statText = `Stat: ${pctYes}% Yes`;
-      }
 
       // Check current site override
       const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, catKey);
@@ -1713,17 +1867,77 @@
       }
 
       const isDealbreaker = !hasOverride && total > 0 && no >= 2 && (no / total) >= 0.60;
-      const sourceSnippet = (sourceClauses && sourceClauses[catKey]) || data.snippet || data.summary || 'Clause text detected in agreement terms.';
-      const cancellationGuide = (catKey === 'AUTO_RENEW') ? (data.cancellationGuide || getDefaultCancellationGuide(currentDomain)) : null;
-
+      const sourceSnippet = (sourceClauses && sourceClauses[catKey]) || data.snippet || data.summary || '';
+      const shortSummaryText = data.shortSummary || data.summary || meta.defaultSummary;
       const riskClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
+
+      // How to Stop Auto-Pay Guide (with numbered steps) if AUTO_RENEW is present
+      let cancellationGuideHtml = '';
+      if (catKey === 'AUTO_RENEW') {
+        const guide = data.cancellationGuide || getDefaultCancellationGuide(currentDomain);
+        if (guide && Array.isArray(guide.steps) && guide.steps.length > 0) {
+          const rawUrl = typeof guide.url === 'string' ? guide.url.trim() : '';
+          const isSecureUrl = /^https:\/\//i.test(rawUrl);
+
+          cancellationGuideHtml = `
+            <div class="tc-cancel-guide-panel">
+              <div class="tc-cancel-guide-header">
+                <span>💡 How to Stop Auto-Pay</span>
+              </div>
+              <div class="tc-cancel-steps-list">
+                ${guide.steps.map((step, idx) => `
+                  <div class="tc-cancel-step-item">
+                    <span class="tc-step-num-badge">${idx + 1}</span>
+                    <span class="tc-step-text">${escapeHtml(step)}</span>
+                  </div>
+                `).join('')}
+              </div>
+              ${isSecureUrl ? `
+                <a class="tc-cancel-guide-link" href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener noreferrer">
+                  <span>Open billing settings</span>
+                  <span>↗</span>
+                </a>
+              ` : ''}
+              <div class="tc-cancel-guide-note">${escapeHtml(guide.domain || currentDomain)} subscription management</div>
+            </div>
+          `;
+        }
+      }
 
       return `
         <div class="tc-card ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
           <div class="tc-card-header">
-            <span class="tc-card-title">${meta.icon} ${meta.name}</span>
+            <span class="tc-card-title">${meta.icon} ${escapeHtml(meta.name)}</span>
+            ${overrideBadgeHtml}
           </div>
+
           <div class="tc-card-question">Is this risk okay with you?</div>
+
+          <!-- Injected shortSummary text above original clause snippet -->
+          <div class="tc-card-short-summary">${escapeHtml(shortSummaryText)}</div>
+
+          <!-- Native <details> and <summary> elements for View Clause toggle -->
+          ${sourceSnippet ? `
+            <details class="tc-clause-details">
+              <summary class="tc-clause-summary">
+                <span>📖 View Clause</span>
+              </summary>
+              <div class="tc-quote">
+                "${escapeHtml(sourceSnippet)}"
+              </div>
+              ${canJumpToClause(catKey) ? `
+                <div style="margin-top: 8px;">
+                  <button class="tc-btn tc-btn-view tc-view-btn" data-cat="${catKey}" title="Jump to this clause in the terms">
+                    <span>↗ Jump to page location</span>
+                  </button>
+                </div>
+              ` : ''}
+            </details>
+          ` : ''}
+
+          <!-- How to Stop Auto-Pay guide if AUTO_RENEW is present -->
+          ${cancellationGuideHtml}
+
           <div class="tc-card-actions">
             <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
               ${isCurrentYes ? '✓ ' : ''}[ Yes ]
@@ -1731,7 +1945,6 @@
             <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no" title="Reject this clause">
               ${isCurrentNo ? '✕ ' : ''}[ No ]
             </button>
-            ${canJumpToClause(catKey) ? `<button class="tc-btn tc-btn-view tc-view-btn" data-cat="${catKey}" title="Jump to this clause in the terms">📖 View Clause</button>` : ''}
           </div>
         </div>
       `;
@@ -1751,7 +1964,10 @@
         <!-- Header -->
         <div class="tc-header">
           <div class="tc-header-title-row">
-            <span class="tc-logo-badge">🛡️ T&C Guardian</span>
+            <span class="tc-logo-badge">
+              <img class="tc-header-mascot" src="${escapeHtml(mascotSrc)}" alt="T&C Guardian" />
+              <span>T&C Guardian</span>
+            </span>
             <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
           </div>
           <div class="tc-header-actions">
@@ -1784,50 +2000,13 @@
       renderUI(analysis, profile, overrides);
     });
 
-    // View Clause Jump & Highlight Listeners
-    root.querySelectorAll('.tc-btn-view-clause').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const catKey = e.currentTarget.getAttribute('data-cat');
-        const el = findDomElementForCategory(catKey);
-        if (el) {
-          flashHighlightElement(el);
-        } else {
-          // If on a sign-up page where terms were pre-fetched, highlight the terms link
-          const link = document.querySelector('a#terms-link') || Array.from(document.querySelectorAll('a')).find(a => TERMS_REGEX.test(a.textContent || ''));
-          if (link) {
-            flashHighlightElement(link);
-          }
-        }
-
-        // Toggle the inline source preview accordion on the card
-        const preview = root.getElementById(`source-preview-${catKey}`);
-        if (preview) {
-          const isHidden = (preview.style.display === 'none' || !preview.style.display);
-          preview.style.display = isHidden ? 'block' : 'none';
-        }
-      });
-    });
-
-    // How to Stop Auto-Pay Guide Listeners
-    root.querySelectorAll('.tc-btn-how-to-cancel').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const catKey = e.currentTarget.getAttribute('data-cat');
-        const panel = root.getElementById(`cancel-guide-${catKey}`);
-        if (panel) {
-          const isHidden = (panel.style.display === 'none' || !panel.style.display);
-          panel.style.display = isHidden ? 'block' : 'none';
-          if (isHidden) {
-            btn.classList.add('active');
-          } else {
-            btn.classList.remove('active');
-          }
-        }
-      });
-    });
-
     // View Clause buttons
     root.querySelectorAll('.tc-view-btn').forEach((btn) => {
-      btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        jumpToClause(btn.getAttribute('data-cat'));
+      });
     });
 
     // Accept / Reject Buttons
