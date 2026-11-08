@@ -11,9 +11,21 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "icons": {
+    "16": "icons/guardian-neutral.png",
+    "32": "icons/guardian-neutral.png",
+    "48": "icons/guardian-neutral.png",
+    "128": "icons/guardian-neutral.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "T&C Guardian Dashboard"
+    "default_title": "T&C Guardian",
+    "default_icon": {
+      "16": "icons/guardian-neutral.png",
+      "32": "icons/guardian-neutral.png",
+      "48": "icons/guardian-neutral.png",
+      "128": "icons/guardian-neutral.png"
+    }
   },
   "background": {
     "service_worker": "background.js",
@@ -28,6 +40,16 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

@@ -15,7 +15,9 @@
   // Constants
   const STORAGE_KEYS = {
     USER_PROFILE: 'tc_guardian_userProfile',
-    SITE_OVERRIDES: 'tc_guardian_siteOverrides'
+    SITE_OVERRIDES: 'tc_guardian_siteOverrides',
+    ANALYSIS_CACHE: 'tc_guardian_analysis_cache',
+    ALWAYS_SHOW_WIDGET: 'tc_always_show_widget'
   };
 
   const CATEGORIES = [
@@ -26,30 +28,51 @@
     'WAIVE_RIGHTS'
   ];
 
+  const HIGH_RISK_CATEGORIES = ['DATA_SALE', 'WAIVE_RIGHTS'];
+  const MEDIUM_LOW_RISK_CATEGORIES = ['AI_TRAINING', 'AUTO_RENEW', 'NO_DELETE'];
+
+  const CATEGORY_MATCHERS = {
+    DATA_SALE: /sell|broker|third party|commercialize|monetiz/i,
+    AI_TRAINING: /train|artificial intelligence|machine learning|neural network|large language model/i,
+    AUTO_RENEW: /renew|subscription|\$99|recurring|refund|cancel/i,
+    NO_DELETE: /retain|delete|indefinitely|archive|preserv/i,
+    WAIVE_RIGHTS: /arbitration|waive|class action|jury trial|dispute/i
+  };
+
   const CATEGORY_META = {
     DATA_SALE: {
-      name: 'Data Sale & Third-Party Brokers',
+      name: 'Data Sale & Third-Party Sharing',
+      question: 'Do you want to allow Data Sale / Third-Party Sharing?',
       icon: '📊',
+      riskLevel: 'HIGH',
       defaultSummary: 'Sells or shares your personal identity, browsing telemetry, and behavior with third-party ad brokers and marketing syndicates.'
     },
     AI_TRAINING: {
-      name: 'AI Model Training on User Data',
+      name: 'AI Model Training',
+      question: 'Do you want to allow AI Model Training on Your Data?',
       icon: '🤖',
+      riskLevel: 'MEDIUM',
       defaultSummary: 'Uses your uploaded content, documents, prompts, and assets to train generative AI and machine learning models without opt-out.'
     },
     AUTO_RENEW: {
-      name: 'Auto-Renewal & No-Refund Policy',
+      name: 'Auto-Renewal & Recurring Billing',
+      question: 'Do you accept Auto-Renewal / Non-Refundable Billing?',
       icon: '💳',
+      riskLevel: 'MEDIUM',
       defaultSummary: 'Automatically renews subscriptions with recurring billing and enforces strict non-refundable terms upon renewal.'
     },
     NO_DELETE: {
       name: 'Indefinite Data Retention',
+      question: 'Do you allow Indefinite Retention After Account Deletion?',
       icon: '🗄️',
+      riskLevel: 'LOW',
       defaultSummary: 'Retains your personal records, database logs, and telemetry indefinitely even after you request account deletion.'
     },
     WAIVE_RIGHTS: {
       name: 'Mandatory Arbitration & Class Action Waiver',
+      question: 'Do you agree to Mandatory Arbitration & Rights Waiver?',
       icon: '⚖️',
+      riskLevel: 'HIGH',
       defaultSummary: 'Forces dispute resolution via private binding arbitration and strips your legal rights to jury trial or class action participation.'
     }
   };
@@ -92,7 +115,9 @@
   const clauseRefs = {};      // category -> { el } (on-page) or { snippet } (fetched text)
   let clauseSourceUrl = null; // URL of the terms document when it is not the current page
   let analysisData = null;
+  let sourceClauses = {};
   let isMinimized = false;
+  let isDismissedForSession = false;
   let shadowRoot = null;
   const currentDomain = (window.location.hostname || 'localhost').replace(/^www\./, '');
 
@@ -156,6 +181,26 @@
     return { profile, overrides };
   }
 
+  function getAlwaysShowWidgetSetting() {
+    return new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        try {
+          chrome.storage.local.get([STORAGE_KEYS.ALWAYS_SHOW_WIDGET], (res) => {
+            resolve(Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]));
+          });
+          return;
+        } catch (e) {
+          console.warn('[TC-Guardian] Error reading alwaysShowWidget:', e);
+        }
+      }
+      try {
+        resolve(localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true');
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
   function saveStorageData(profile, overrides) {
     return new Promise((resolve) => {
       // Prefer extension storage. Never write to the host page's localStorage
@@ -183,6 +228,76 @@
       }
       resolve();
     });
+  }
+
+  /**
+   * Cache Invalidation:
+   * Clears cached analysis results on page load so new sites or navigations
+   * trigger fresh, site-specific API evaluations instead of holding stale state.
+   * Explicitly preserves user preference history and per-site overrides.
+   */
+  function clearCachedAnalysis() {
+    try {
+      const localKeysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (
+          key &&
+          key !== STORAGE_KEYS.USER_PROFILE &&
+          key !== STORAGE_KEYS.SITE_OVERRIDES &&
+          (key.startsWith('tc_guardian_analysis') ||
+            key.startsWith('tc_analysis') ||
+            key.startsWith('tc_cache_') ||
+            key === 'tc_guardian_cache')
+        ) {
+          localKeysToRemove.push(key);
+        }
+      }
+      localKeysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (e) {
+      // Ignore localStorage errors
+    }
+
+    try {
+      const sessionKeysToRemove = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (
+          key &&
+          (key.startsWith('tc_guardian_analysis') ||
+            key.startsWith('tc_analysis') ||
+            key.startsWith('tc_cache_') ||
+            key === 'tc_guardian_cache')
+        ) {
+          sessionKeysToRemove.push(key);
+        }
+      }
+      sessionKeysToRemove.forEach((k) => sessionStorage.removeItem(k));
+    } catch (e) {
+      // Ignore sessionStorage errors
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        chrome.storage.local.get(null, (items) => {
+          if (!items) return;
+          const chromeKeysToRemove = Object.keys(items).filter(
+            (k) =>
+              k !== STORAGE_KEYS.USER_PROFILE &&
+              k !== STORAGE_KEYS.SITE_OVERRIDES &&
+              (k.startsWith('tc_guardian_analysis') ||
+                k.startsWith('tc_analysis') ||
+                k.startsWith('tc_cache_') ||
+                k === 'tc_guardian_cache')
+          );
+          if (chromeKeysToRemove.length > 0) {
+            chrome.storage.local.remove(chromeKeysToRemove);
+          }
+        });
+      } catch (e) {
+        // Ignore chrome.storage errors
+      }
+    }
   }
 
   /**
@@ -240,6 +355,70 @@
     return Array.from(document.querySelectorAll('a, button')).some(
       (el) => SIGNUP_LINK_REGEX.test((el.textContent || '').trim())
     );
+  }
+
+  const SIGNUP_CHECKOUT_LEGAL_URL_REGEX = /(?:sign-?up|register|registration|join|create-?account|create_account|checkout|check-out|cart|billing|subscription|subscribe|order|purchase|payment|pay|terms|privacy|(?:^|[^a-z])tos(?:[^a-z]|$)|conditions|legal|eula|policy|policies)/i;
+  const SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX = /(?:sign\s*up|register|registration|create\s*(?:an\s*)?account|join\s*(?:today|us|now)?|checkout|check\s*out|place\s*order|billing|subscription|subscribe|payment|terms\s*of|privacy\s*policy|legal\s*terms|user\s*agreement|conditions\s*of\s*use|eula)/i;
+  const SIGNUP_CHECKOUT_ACTION_BTN_REGEX = /^(?:sign\s*up|create\s*(?:an\s*)?account|register|complete\s*(?:registration|sign\s*up|order)|place\s*order|checkout|subscribe|start\s*(?:free\s*)?trial|pay\s*now)$/i;
+
+  /**
+   * Check if current page is a Signup, Checkout, or Legal page
+   */
+  function isSignupCheckoutOrLegalPage() {
+    // 1. Direct Terms/Legal page detection
+    if (isTermsPage()) return true;
+
+    // 2. URL Path, Hash, Search, or Full URL Match
+    try {
+      const url = window.location.href || '';
+      const pathname = window.location.pathname || '';
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      if (
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(pathname) ||
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(hash) ||
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(search) ||
+        SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(url)
+      ) {
+        return true;
+      }
+    } catch (e) {}
+
+    // 3. Page Title & Meta Tags Check
+    try {
+      const title = document.title || '';
+      if (SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX.test(title)) return true;
+
+      const metaTags = document.querySelectorAll('meta[name="description"], meta[property="og:title"], meta[property="og:description"], meta[name="keywords"]');
+      for (const meta of metaTags) {
+        const content = meta.getAttribute('content') || '';
+        if (SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX.test(content)) return true;
+      }
+    } catch (e) {}
+
+    // 4. Signup / Checkout Interactive Elements
+    try {
+      // Buttons indicating primary registration, checkout, or subscription action
+      const buttons = document.querySelectorAll('button, input[type="submit"], a.btn, a[role="button"]');
+      for (const btn of buttons) {
+        const text = (btn.textContent || btn.value || '').trim();
+        if (SIGNUP_CHECKOUT_ACTION_BTN_REGEX.test(text)) return true;
+      }
+
+      // Password input combined with terms agreement checkbox or registration cues
+      const hasPassword = Boolean(document.querySelector('input[type="password"]'));
+      const hasTermsCheckbox = Boolean(document.querySelector('input[type="checkbox"][name*="terms" i], input[type="checkbox"][id*="terms" i], input[type="checkbox"][name*="agree" i], input[type="checkbox"][id*="agree" i]'));
+      if (hasPassword && hasTermsCheckbox) return true;
+
+      // Form action URL targeting signup/register/checkout
+      const forms = document.querySelectorAll('form[action]');
+      for (const form of forms) {
+        const action = form.getAttribute('action') || '';
+        if (SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(action)) return true;
+      }
+    } catch (e) {}
+
+    return false;
   }
 
   function findTermsLink() {
@@ -399,6 +578,69 @@
   }
 
   /**
+   * Source Text Reference Extraction & DOM Highlighting
+   */
+  function extractSourceClauses(text) {
+    const map = {};
+    if (!text) return map;
+    const blocks = text.split(/\n\s*\n|\r\n\s*\r\n/);
+
+    CATEGORIES.forEach((catKey) => {
+      const matcher = CATEGORY_MATCHERS[catKey];
+      if (!matcher) return;
+      for (const b of blocks) {
+        const clean = b.replace(/\s+/g, ' ').trim();
+        if (clean.length >= 25 && matcher.test(clean)) {
+          map[catKey] = clean;
+          break;
+        }
+      }
+    });
+
+    return map;
+  }
+
+  function findDomElementForCategory(catKey) {
+    const matcher = CATEGORY_MATCHERS[catKey];
+    if (!matcher) return null;
+
+    // Search document for matching paragraph or container (excluding our Shadow DOM host)
+    const elements = Array.from(document.querySelectorAll('.flag-clause, p, li, blockquote, div'));
+    for (const el of elements) {
+      if (el.closest('#tc-guardian-host')) continue;
+      const txt = el.innerText || el.textContent || '';
+      if (txt.length >= 30 && txt.length <= 1600 && matcher.test(txt)) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function flashHighlightElement(element) {
+    if (!element) return;
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    const prevBg = element.style.backgroundColor;
+    const prevShadow = element.style.boxShadow;
+    const prevRadius = element.style.borderRadius;
+    const prevTransition = element.style.transition;
+
+    element.style.transition = 'background-color 0.3s ease, box-shadow 0.3s ease';
+    element.style.backgroundColor = 'rgba(250, 204, 21, 0.45)'; // Flash yellow highlight
+    element.style.boxShadow = '0 0 0 5px rgba(250, 204, 21, 0.7)';
+    element.style.borderRadius = '6px';
+
+    setTimeout(() => {
+      element.style.backgroundColor = prevBg;
+      element.style.boxShadow = prevShadow;
+      element.style.borderRadius = prevRadius;
+      setTimeout(() => {
+        element.style.transition = prevTransition;
+      }, 350);
+    }, 2200);
+  }
+
+  /**
    * Message Passing & Standalone Fallback
    */
   async function requestAnalysis(filteredText, domain, remoteUrl) {
@@ -449,40 +691,173 @@
     return generateLocalMockResponse(filteredText || '');
   }
 
-  function generateLocalMockResponse(text) {
-    // Stricter phrase-level patterns to limit false positives.
-    const hasDataSale = /\b(sell|sold|selling)\b[^.]{0,60}(personal|data|information)|data brokers?|sale of (your )?(personal )?(data|information)/i.test(text);
-    const hasAiTraining = /train(ing)?\b[^.]{0,60}\b(models?|artificial intelligence|machine learning|\bAI\b)|\b(artificial intelligence|machine learning)\b[^.]{0,60}\btrain/i.test(text);
-    const hasAutoRenew = /auto(matic(ally)?)?[- ]?renew|renews? automatically|recurring (billing|subscription|charge)/i.test(text);
-    const hasNoDelete = /(retain|keep|preserve|store)[^.]{0,80}(indefinite(ly)?|after (you )?(delet|terminat|clos))|backups?[^.]{0,60}(indefinite|retain)/i.test(text);
-    const hasWaiveRights = /binding arbitration|class[- ]action (waiver|waive)|waive[^.]{0,60}(jury|class action)/i.test(text);
+  /**
+   * Subscription Cancellation Guides Helper
+   * Provides step-by-step instructions and direct settings links for popular subscription domains.
+   */
+  function getDefaultCancellationGuide(domain = '') {
+    const cleanDomain = String(domain || currentDomain || 'current site').toLowerCase().replace(/^www\./, '');
+    const known = {
+      'netflix.com': {
+        domain: 'netflix.com',
+        url: 'https://www.netflix.com/youraccount',
+        steps: [
+          'Go to your Netflix Account page (netflix.com/youraccount)',
+          'Under the "Membership & Billing" section, click "Cancel Membership"',
+          'Select "Finish Cancellation" to confirm and stop recurring billing'
+        ]
+      },
+      'spotify.com': {
+        domain: 'spotify.com',
+        url: 'https://www.spotify.com/account/overview/',
+        steps: [
+          'Log in to your Spotify Account page',
+          'Scroll down to "Your plan" and click "Change plan"',
+          'Scroll to "Cancel Spotify" and click "Cancel Premium"'
+        ]
+      },
+      'adobe.com': {
+        domain: 'adobe.com',
+        url: 'https://account.adobe.com/plans',
+        steps: [
+          'Sign in to account.adobe.com/plans',
+          'Select "Manage plan" for your subscription',
+          'Choose "Cancel your plan" and complete the cancellation steps'
+        ]
+      },
+      'amazon.com': {
+        domain: 'amazon.com',
+        url: 'https://www.amazon.com/mc/manage',
+        steps: [
+          'Go to Amazon Account -> "Your Memberships & Subscriptions"',
+          'Select "Manage Subscription" next to the recurring service',
+          'Click "End Subscription" and follow the confirmation prompts'
+        ]
+      },
+      'quora.com': {
+        domain: 'quora.com',
+        url: 'https://www.quora.com/settings/subscription',
+        steps: [
+          'Navigate to your Quora profile settings -> "Subscriptions"',
+          'Find Quora+ subscription and click "Cancel Subscription"',
+          'Follow the prompts to stop recurring charges'
+        ]
+      },
+      'reddit.com': {
+        domain: 'reddit.com',
+        url: 'https://www.reddit.com/settings/premium',
+        steps: [
+          'Go to Reddit User Settings -> "Subscriptions"',
+          'Under Reddit Premium, click "Manage Subscription"',
+          'Click "Cancel" to deactivate recurring auto-renewal'
+        ]
+      }
+    };
 
-    const note = ' (Keyword match only; review the original terms to confirm.)';
+    for (const [k, g] of Object.entries(known)) {
+      if (cleanDomain === k || cleanDomain.endsWith('.' + k)) {
+        return { ...g };
+      }
+    }
+
     return {
-      success: true,
-      engine: 'Keyword Heuristic (Standalone Fallback)',
-      categories: {
-        DATA_SALE: {
-          present: hasDataSale,
-          summary: 'The terms appear to mention selling or sharing personal data with third parties.' + note
-        },
-        AI_TRAINING: {
-          present: hasAiTraining,
-          summary: 'The terms appear to mention training AI or machine learning models.' + note
-        },
-        AUTO_RENEW: {
-          present: hasAutoRenew,
-          summary: 'The terms appear to mention automatic renewal or recurring billing.' + note
-        },
-        NO_DELETE: {
-          present: hasNoDelete,
-          summary: 'The terms appear to mention retaining data indefinitely or after deletion.' + note
-        },
-        WAIVE_RIGHTS: {
-          present: hasWaiveRights,
-          summary: 'The terms appear to mention binding arbitration or a class action / jury waiver.' + note
+      domain: cleanDomain || 'this service',
+      url: cleanDomain && cleanDomain !== 'localhost' ? `https://${cleanDomain}` : null,
+      steps: [
+        'Locate your Profile or Avatar icon in the top navigation bar',
+        'Go to "Account Settings", "Billing", or "Subscriptions"',
+        'Look for "Manage Plan", "Auto-Renew", or "Payment Methods"',
+        'Select "Cancel Subscription" or toggle off "Auto-Renew" before your next billing cycle'
+      ]
+    };
+  }
+
+  function getFallbackResolutionSteps(catKey, domain = '') {
+    const cleanDomain = String(domain || currentDomain || '').toLowerCase().replace(/^www\./, '');
+    if (catKey === 'DATA_SALE') {
+      return [
+        'Visit the site\'s Privacy Settings or footer and select "Do Not Sell My Info" or "Cookie Preferences".',
+        'Toggle off third-party ad targeting, data sharing, and behavioral tracking.',
+        'Submit a formal CCPA/GDPR opt-out request through their privacy webform or email.'
+      ];
+    }
+    if (catKey === 'AI_TRAINING') {
+      return [
+        'Open your Account Settings or Privacy / Data Controls dashboard.',
+        'Locate "Model Improvement", "AI Training", or "Content Permissions".',
+        'Turn off the toggle allowing your prompts, files, or uploaded data to train artificial intelligence models.'
+      ];
+    }
+    if (catKey === 'AUTO_RENEW') {
+      const guide = getDefaultCancellationGuide(domain);
+      return guide.steps;
+    }
+    if (catKey === 'WAIVE_RIGHTS') {
+      return [
+        'Review the Arbitration section in the terms for an opt-out deadline (typically 30 days from sign-up).',
+        'Draft a brief written notice stating your name, account identifier, and explicit rejection of the arbitration clause.',
+        'Send the opt-out notice via email or certified mail to the company\'s designated legal notice address.'
+      ];
+    }
+    if (catKey === 'NO_DELETE') {
+      return [
+        'Contact customer support or the Data Protection Officer requesting total account erasure.',
+        'Cite your right to deletion under GDPR (Article 17) or CCPA where applicable.',
+        'Request written confirmation once persistent records and backup archives are purged.'
+      ];
+    }
+    return [];
+  }
+
+  function generateLocalMockResponse(text) {
+    // Negation-aware keyword detection to prevent false positives (e.g., "do not sell", "never sell")
+    const checkUnnegated = (pattern) => {
+      let m;
+      const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
+      while ((m = regex.exec(text)) !== null) {
+        const preceding = text.slice(Math.max(0, m.index - 60), m.index);
+        if (!/\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not)\b/i.test(preceding)) {
+          return true;
         }
       }
+      return false;
+    };
+
+    const hasDataSale = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)\b(sell|sold|selling|monetiz\w*)\b[^.]{0,60}(personal|data|information)|data brokers?|(?<!\b(?:no\s+|not\s+))sale of (your )?(personal )?(data|information)/gi);
+    const hasAiTraining = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train(ing)?\b[^.]{0,60}\b(models?|artificial intelligence|machine learning|\bAI\b)|\b(artificial intelligence|machine learning)\b[^.]{0,60}\btrain)/gi);
+    const hasAutoRenew = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)auto(matic(ally)?)?[- ]?renew|renews? automatically|recurring (billing|subscription|charge)/gi);
+    const hasNoDelete = checkUnnegated(/(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)(retain|keep|preserve|store)[^.]{0,80}(indefinite(ly)?|after (you )?(delet|terminat|clos))|backups?[^.]{0,60}(indefinite|retain)/gi);
+    const hasWaiveRights = checkUnnegated(/binding arbitration|class[- ]action (waiver|waive)|waive[^.]{0,60}(jury|class action)/gi);
+
+    const currentEngine = 'Keyword Heuristic (Standalone Fallback)';
+    const finalData = {
+      DATA_SALE: {
+        present: hasDataSale,
+        summary: 'Sells or discloses your behavioral telemetry and profile to commercial third-party data brokers and marketing networks.'
+      },
+      AI_TRAINING: {
+        present: hasAiTraining,
+        summary: 'Grants an irrevocable license to train proprietary artificial intelligence and neural network models using your uploads and prompts.'
+      },
+      AUTO_RENEW: {
+        present: hasAutoRenew,
+        summary: 'Enforces automatic recurring subscription renewals ($99/mo) accompanied by strict non-refundable cancellation terms.'
+      },
+      NO_DELETE: {
+        present: hasNoDelete,
+        summary: 'Preserves customer data and activity logs indefinitely in persistent archives even after explicit account deletion requests.'
+      },
+      WAIVE_RIGHTS: {
+        present: hasWaiveRights,
+        summary: 'Mandates individual binding arbitration and forces you to waive all rights to trial by jury and class action participation.'
+      }
+    };
+
+    return {
+      success: true,
+      engine: currentEngine,
+      categories: finalData,
+      data: finalData
     };
   }
 
@@ -515,16 +890,18 @@
       }
 
       if (catData) {
+        const isPresent = Boolean(catData.present);
         normalized[catKey] = {
-          present: isActiveFlag(catData.present),
-          question: typeof catData.question === 'string' ? catData.question.trim() : '',
-          snippet: String(catData.snippet || catData.quote || '').trim(),
+          present: Boolean(catData.present),
           summary: catData.summary || CATEGORY_META[catKey].defaultSummary
         };
       } else {
         normalized[catKey] = {
           present: false,
-          summary: CATEGORY_META[catKey].defaultSummary
+          summary: CATEGORY_META[catKey].defaultSummary,
+          shortSummary: '',
+          snippet: '',
+          cancellationGuide: null
         };
       }
     });
@@ -544,6 +921,7 @@
     if (!host) {
       host = document.createElement('div');
       host.id = HOST_ID;
+      host.className = 'tc-widget-container';
       (document.body || document.documentElement).appendChild(host);
     }
     if (!shadowRoot) {
@@ -558,13 +936,18 @@
         all: initial;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         font-size: 13px;
-        color: #f8fafc;
+        color: #0f172a;
         line-height: 1.5;
         box-sizing: border-box;
       }
 
       *, *::before, *::after {
         box-sizing: border-box;
+      }
+
+      /* Base Floating Widget Container */
+      .tc-widget-container {
+        display: block;
       }
 
       .tc-widget {
@@ -576,15 +959,17 @@
         max-width: calc(100vw - 40px);
         height: auto; /* grows/shrinks with the number of flagged clauses */
         max-height: calc(100vh - 40px);
-        background: #0f172a;
-        border: 1px solid #334155;
-        border-radius: 14px;
-        box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
+        box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05);
         display: flex;
         flex-direction: column;
         overflow: hidden;
         animation: tc-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
         backdrop-filter: blur(12px);
+        color: #0f172a;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
       }
 
       @keyframes tc-slide-in {
@@ -604,16 +989,16 @@
         top: 20px;
         right: 20px;
         z-index: 2147483647;
-        background: #0f172a;
-        color: #f8fafc;
-        border: 1px solid #3b82f6;
+        background: #ffffff;
+        color: #0f172a;
+        border: 1px solid #e2e8f0;
         border-radius: 30px;
         padding: 8px 16px;
         cursor: pointer;
         display: flex;
         align-items: center;
         gap: 8px;
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
         font-weight: 600;
         font-size: 13px;
         transition: transform 0.15s ease, background 0.15s ease;
@@ -621,11 +1006,32 @@
 
       .tc-bubble:hover {
         transform: translateY(-2px);
-        background: #1e293b;
+        background: #f8fafc;
+      }
+
+      .tc-bubble-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        margin-left: 4px;
+        border-radius: 50%;
+        color: #94a3b8;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+
+      .tc-bubble-close:hover {
+        background: #e2e8f0;
+        color: #0f172a;
       }
 
       .tc-bubble-dealbreaker {
         border-color: #ef4444;
+        color: #dc2626;
         animation: pulse-danger 2s infinite;
       }
 
@@ -637,8 +1043,8 @@
       /* Header */
       .tc-header {
         padding: 14px 18px;
-        background: #1e293b;
-        border-bottom: 1px solid #334155;
+        background: inherit;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -651,19 +1057,37 @@
       }
 
       .tc-logo-badge {
-        background: #3b82f6;
-        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #f1f5f9;
+        color: #0f172a;
         font-weight: 700;
-        font-size: 11px;
-        padding: 2px 7px;
-        border-radius: 6px;
-        letter-spacing: 0.5px;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        letter-spacing: 0.2px;
+      }
+
+      .tc-header-mascot {
+        width: 18px;
+        height: 18px;
+        object-fit: contain;
+        vertical-align: middle;
+      }
+
+      .tc-bubble-mascot {
+        width: 18px;
+        height: 18px;
+        object-fit: contain;
+        vertical-align: middle;
       }
 
       .tc-title {
         font-size: 15px;
         font-weight: 700;
-        color: #ffffff;
+        color: #0f172a;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -671,11 +1095,11 @@
 
       .tc-domain-tag {
         font-size: 11px;
-        color: #94a3b8;
-        background: #0f172a;
+        color: #475569;
+        background: #f1f5f9;
         padding: 2px 8px;
-        border-radius: 4px;
-        border: 1px solid #334155;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
         font-family: monospace;
       }
 
@@ -688,7 +1112,7 @@
       .tc-icon-btn {
         background: transparent;
         border: none;
-        color: #94a3b8;
+        color: #64748b;
         cursor: pointer;
         padding: 4px 6px;
         border-radius: 6px;
@@ -700,78 +1124,19 @@
       }
 
       .tc-icon-btn:hover {
-        background: #334155;
-        color: #f8fafc;
-      }
-
-      /* Subheader Meta Bar */
-      .tc-subbar {
-        padding: 8px 18px;
-        background: rgba(15, 23, 42, 0.7);
-        border-bottom: 1px solid #1e293b;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 11px;
-        color: #94a3b8;
-      }
-
-      .tc-engine-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        color: #38bdf8;
-      }
-
-      .tc-engine-pill::before {
-        content: '';
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #38bdf8;
-      }
-
-      .tc-reset-btn {
-        background: transparent;
-        border: 1px solid #475569;
-        color: #cbd5e1;
-        font-size: 10px;
-        font-weight: 500;
-        padding: 2px 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: all 0.15s ease;
-      }
-
-      .tc-reset-btn:hover {
-        background: #ef4444;
-        border-color: #ef4444;
-        color: #ffffff;
-      }
-
-      /* Alert Banner for Dealbreakers */
-      .tc-dealbreaker-banner {
-        background: rgba(239, 68, 68, 0.15);
-        border-left: 4px solid #ef4444;
-        padding: 10px 18px;
-        font-size: 12px;
-        font-weight: 600;
-        color: #fca5a5;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        animation: pulse-border 2s infinite;
+        background: #f1f5f9;
+        color: #0f172a;
       }
 
       /* Card List */
       .tc-body {
         padding: 14px 18px;
         overflow-y: auto;
-        flex: 1 1 auto;
-        min-height: 0; /* lets the body shrink and scroll inside the capped widget */
+        max-height: calc(100vh - 220px);
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 14px;
+        background: transparent;
       }
 
       .tc-body::-webkit-scrollbar {
@@ -779,26 +1144,46 @@
       }
 
       .tc-body::-webkit-scrollbar-track {
-        background: #0f172a;
+        background: transparent;
       }
 
       .tc-body::-webkit-scrollbar-thumb {
-        background: #334155;
+        background: #cbd5e1;
         border-radius: 3px;
       }
 
-      /* Card */
-      .tc-card {
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 14px;
+      /* Base Finding Card */
+      .tc-card,
+      .tc-risk-item {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 14px 16px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
 
-      .tc-card-dealbreaker {
-        border-color: #ef4444;
-        background: rgba(239, 68, 68, 0.05);
+      /* Risk-Themed Accents on Inner Risk Item Containers */
+      .tc-card.risk-high,
+      .tc-card.tc-card-dealbreaker,
+      .tc-risk-item.risk-high {
+        background-color: #fef2f2 !important;
+        border-left: 5px solid #dc2626 !important;
+        border-color: #fecaca !important;
+      }
+
+      .tc-card.risk-med,
+      .tc-risk-item.risk-med {
+        background-color: #fffbeb !important;
+        border-left: 5px solid #d97706 !important;
+        border-color: #fde68a !important;
+      }
+
+      .tc-card.risk-low,
+      .tc-risk-item.risk-low {
+        background-color: #f0fdf4 !important;
+        border-left: 5px solid #16a34a !important;
+        border-color: #bbf7d0 !important;
       }
 
       .tc-card-header {
@@ -806,127 +1191,597 @@
         align-items: flex-start;
         justify-content: space-between;
         gap: 8px;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
+      }
+
+      .tc-card-question {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 12px;
+        line-height: 1.4;
       }
 
       .tc-card-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: #f1f5f9;
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #0f172a;
+        line-height: 1.4;
         display: flex;
-        align-items: center;
-        gap: 6px;
+        align-items: flex-start;
+        gap: 8px;
       }
 
-      /* Badges */
-      .tc-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 600;
-        line-height: 1.3;
+      .tc-question {
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #0f172a;
+        line-height: 1.4;
         margin-bottom: 8px;
       }
 
-      .tc-badge.dealbreaker {
-        background: #ef4444;
-        color: #ffffff;
-        box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+      .tc-quote {
+        font-size: 11.5px;
+        color: #64748b;
+        font-style: italic;
+        margin-top: 6px;
+        line-height: 1.45;
       }
 
-      .tc-badge.assumed-yes {
-        background: #059669;
-        color: #ecfdf5;
+      .tc-cat-icon {
+        font-size: 16px;
+        line-height: 1.2;
+        flex-shrink: 0;
       }
 
-      .tc-badge.override-yes {
-        background: #047857;
-        color: #d1fae5;
-        border: 1px solid #10b981;
+      .tc-risk-pill {
+        font-size: 9.5px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        padding: 2px 7px;
+        border-radius: 9999px;
+        text-transform: uppercase;
+        flex-shrink: 0;
       }
 
-      .tc-badge.override-no {
-        background: #b91c1c;
-        color: #fee2e2;
-        border: 1px solid #ef4444;
+      .tc-risk-pill.risk-high {
+        background: #fee2e2;
+        color: #dc2626;
+        border: 1px solid #fca5a5;
       }
 
-      .tc-badge.new-question {
-        background: #d97706;
-        color: #fffbeb;
+      .tc-risk-pill.risk-med {
+        background: #fef3c7;
+        color: #d97706;
+        border: 1px solid #fde68a;
+      }
+
+      .tc-risk-pill.risk-low {
+        background: #dcfce7;
+        color: #16a34a;
+        border: 1px solid #bbf7d0;
       }
 
       .tc-card-summary {
         font-size: 12px;
-        color: #cbd5e1;
-        line-height: 1.5;
+        color: #334155;
+        line-height: 1.55;
         margin-bottom: 12px;
+        background: rgba(255, 255, 255, 0.8);
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
+        border-left: 3px solid #3b82f6;
       }
 
-      /* Card Actions */
+      /* Stat Line */
+      .tc-card-statline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11px;
+        margin-bottom: 12px;
+        padding: 0 2px;
+      }
+
+      .tc-stat-pill {
+        color: #0284c7;
+        font-weight: 600;
+        font-size: 12px;
+        background: #f0f9ff;
+        padding: 2px 8px;
+        border-radius: 6px;
+        border: 1px solid #bae6fd;
+        font-family: monospace;
+      }
+
+      /* Injected Short Summary Text */
+      .tc-card-short-summary {
+        font-size: 12.5px;
+        color: #334155;
+        line-height: 1.45;
+        margin-bottom: 10px;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+      }
+
+      /* Accessible Clause Details & Summary (Native Elements) */
+      details.tc-clause-details {
+        margin-top: 8px;
+        margin-bottom: 12px;
+        border-top: 1px dashed rgba(0, 0, 0, 0.08);
+        padding-top: 8px;
+      }
+
+      summary.tc-clause-summary {
+        list-style: none;
+        cursor: pointer;
+        color: #0369a1;
+        font-size: 11.5px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+
+      summary.tc-clause-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary.tc-clause-summary::after {
+        content: '▸';
+        font-size: 10px;
+        color: #0369a1;
+        transition: transform 0.2s ease;
+      }
+
+      details.tc-clause-details[open] > summary.tc-clause-summary::after {
+        transform: rotate(90deg);
+      }
+
+      summary.tc-clause-summary:hover {
+        background: #e0f2fe;
+        color: #0284c7;
+      }
+
+      details.tc-clause-details .tc-quote {
+        margin-top: 8px;
+        padding: 8px 12px;
+        background: #f8fafc;
+        border-left: 3px solid #cbd5e1;
+        border-radius: 6px;
+        font-size: 11.5px;
+        color: #475569;
+        font-style: italic;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+
+      /* Resolution Guide UI (Native <details> and <summary>) */
+      details.tc-resolution-guide {
+        margin-top: 8px;
+        margin-bottom: 12px;
+        border-top: 1px dashed rgba(0, 0, 0, 0.08);
+        padding-top: 8px;
+      }
+
+      details.tc-resolution-guide summary {
+        list-style: none;
+        cursor: pointer;
+        color: #d97706;
+        font-size: 11.5px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+
+      details.tc-resolution-guide summary::-webkit-details-marker {
+        display: none;
+      }
+
+      details.tc-resolution-guide summary::after {
+        content: '▸';
+        font-size: 10px;
+        color: #d97706;
+        transition: transform 0.2s ease;
+      }
+
+      details.tc-resolution-guide[open] > summary::after {
+        transform: rotate(90deg);
+      }
+
+      details.tc-resolution-guide summary:hover {
+        background: #fef3c7;
+        color: #b45309;
+      }
+
+      details.tc-resolution-guide .tc-resolution-content {
+        margin-top: 8px;
+        padding: 10px 12px;
+        background: #ffffff;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        font-size: 11.5px;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      details.tc-resolution-guide ol.tc-resolution-steps {
+        margin: 0;
+        padding-left: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      details.tc-resolution-guide ol.tc-resolution-steps li {
+        color: #334155;
+      }
+
+      .tc-resolution-link-wrapper {
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px dashed #e2e8f0;
+      }
+
+      .tc-resolution-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: #2563eb;
+        font-weight: 600;
+        font-size: 11px;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      .tc-resolution-link:hover {
+        color: #1d4ed8;
+      }
+
+      /* Action Buttons: Soft Rounded Aesthetic */
+      .tc-btn-view-clause,
+      .tc-view-btn {
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        color: #0369a1;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.15s ease;
+      }
+
+      .tc-btn-view-clause:hover,
+      .tc-view-btn:hover {
+        background: #e0f2fe;
+        color: #0284c7;
+        border-color: #7dd3fc;
+      }
+
+      .tc-btn-how-to-cancel {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #b45309;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.15s ease;
+      }
+
+      .tc-btn-how-to-cancel:hover,
+      .tc-btn-how-to-cancel.active {
+        background: #fef3c7;
+        color: #92400e;
+        border-color: #fcd34d;
+        box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
+      }
+
+      /* How to Stop Auto-Pay Guide */
+      .tc-cancel-guide-panel {
+        background: #fffdf5;
+        border: 1px solid #fde68a;
+        border-radius: 12px;
+        padding: 12px 14px;
+        margin-top: 8px;
+        margin-bottom: 12px;
+        font-size: 12px;
+        animation: tc-fade-in 0.2s ease;
+      }
+
+      .tc-cancel-guide-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 700;
+        color: #92400e;
+        margin-bottom: 10px;
+        font-size: 12.5px;
+      }
+
+      .tc-cancel-steps-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .tc-cancel-step-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 11.5px;
+        color: #451a03;
+        line-height: 1.45;
+      }
+
+      .tc-step-num-badge {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fef3c7;
+        border: 1px solid #fde68a;
+        color: #b45309;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .tc-step-text {
+        flex: 1;
+      }
+
+      .tc-cancel-guide-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 7px 12px;
+        background: #f59e0b;
+        color: #0f172a;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 11.5px;
+        transition: all 0.15s ease;
+      }
+
+      .tc-cancel-guide-link:hover {
+        background: #d97706;
+      }
+
+      .tc-cancel-guide-note {
+        font-size: 10px;
+        color: #92400e;
+        margin-top: 6px;
+      }
+
+      .tc-source-preview {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        font-size: 12px;
+        animation: tc-fade-in 0.2s ease;
+      }
+
+      @keyframes tc-fade-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .tc-preview-bullet-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        color: #1e293b;
+        font-size: 12px;
+        line-height: 1.45;
+        margin-bottom: 8px;
+      }
+
+      .tc-bullet-dot {
+        color: #0284c7;
+        font-size: 16px;
+        line-height: 1.1;
+        user-select: none;
+      }
+
+      .tc-bullet-content {
+        flex: 1;
+      }
+
+      .tc-bullet-label {
+        font-weight: 700;
+        color: #0369a1;
+        margin-right: 4px;
+      }
+
+      .tc-bullet-text {
+        color: #334155;
+      }
+
+      /* Raw Legal Snippet Accordion */
+      .tc-raw-accordion {
+        margin-top: 6px;
+        border-top: 1px solid #e2e8f0;
+        padding-top: 6px;
+      }
+
+      .tc-accordion-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        color: #64748b;
+        padding: 4px 2px;
+        user-select: none;
+        list-style: none;
+        transition: color 0.15s ease;
+      }
+
+      .tc-accordion-toggle::-webkit-details-marker {
+        display: none;
+      }
+
+      .tc-accordion-toggle:hover {
+        color: #0f172a;
+      }
+
+      .tc-accordion-chevron {
+        font-size: 11px;
+        transition: transform 0.2s ease;
+        display: inline-block;
+      }
+
+      .tc-raw-accordion[open] .tc-accordion-chevron {
+        transform: rotate(180deg);
+      }
+
+      .tc-raw-accordion[open] .tc-accordion-toggle {
+        color: #0284c7;
+        margin-bottom: 6px;
+      }
+
+      .tc-source-preview-body {
+        color: #475569;
+        font-style: italic;
+        font-size: 11.5px;
+        line-height: 1.45;
+        background: #ffffff;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
+        border-left: 3px solid #0284c7;
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+
+      .tc-override-pill {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 6px;
+      }
+
+      .tc-override-pill.pill-yes {
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+      }
+
+      .tc-override-pill.pill-no {
+        background: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+      }
+
+      .tc-dealbreaker-pill {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 6px;
+        background: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+      }
+
+      /* Prominent Action Buttons */
       .tc-card-actions {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
       }
 
       .tc-btn {
         flex: 1;
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 600;
+        padding: 9px 14px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 700;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        letter-spacing: 0.3px;
         transition: all 0.15s ease;
         border: 1px solid transparent;
       }
 
       .tc-btn-yes {
-        background: #14532d;
-        color: #86efac;
-        border-color: #166534;
+        background: #ecfdf5;
+        color: #047857;
+        border-color: #a7f3d0;
       }
 
       .tc-btn-yes:hover {
-        background: #16a34a;
+        background: #10b981;
         color: #ffffff;
+        border-color: #10b981;
+        box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
       }
 
       .tc-btn-yes.active {
-        background: #15803d;
+        background: #059669;
         color: #ffffff;
-        border-color: #22c55e;
-        box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+        border-color: #059669;
+        box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3);
       }
 
       .tc-btn-no {
-        background: #7f1d1d;
-        color: #fca5a5;
-        border-color: #991b1b;
+        background: #fef2f2;
+        color: #b91c1c;
+        border-color: #fecaca;
       }
 
       .tc-btn-no:hover {
-        background: #dc2626;
+        background: #ef4444;
         color: #ffffff;
+        border-color: #ef4444;
+        box-shadow: 0 2px 6px rgba(239, 68, 68, 0.25);
       }
 
       .tc-btn-no.active {
-        background: #b91c1c;
+        background: #dc2626;
         color: #ffffff;
-        border-color: #ef4444;
-        box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+        border-color: #dc2626;
+        box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
       }
 
       /* Empty State */
       .tc-empty {
         text-align: center;
         padding: 24px;
-        color: #94a3b8;
+        color: #64748b;
       }
 
       .tc-empty-icon {
@@ -934,44 +1789,7 @@
         margin-bottom: 8px;
       }
 
-      .tc-question {
-        font-size: 13px;
-        font-weight: 600;
-        color: #f8fafc;
-        line-height: 1.45;
-        margin-bottom: 8px;
-      }
-
-      .tc-quote {
-        font-size: 11px;
-        color: #94a3b8;
-        font-style: italic;
-        border-left: 2px solid #475569;
-        padding-left: 8px;
-        margin-bottom: 12px;
-      }
-
-      mark {
-        background: rgba(250, 204, 21, 0.25);
-        color: #fde68a;
-        padding: 0 2px;
-        border-radius: 3px;
-      }
-
-      .tc-subbar-right {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .tc-autoread {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        cursor: pointer;
-        color: #94a3b8;
-      }
-
+      /* Voice settings + notices */
       .tc-settings {
         padding: 10px 18px;
         background: rgba(15, 23, 42, 0.9);
@@ -987,59 +1805,55 @@
       .tc-set-row select, .tc-set-row input[type="range"] { max-width: 150px; }
       .tc-set-row select { background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; padding: 3px 6px; }
       .tc-set-test { align-self: flex-start; }
+      .tc-voice-notice { padding: 6px 18px; font-size: 11px; color: #fde68a; background: rgba(245, 158, 11, 0.12); }
+      .tc-speak-btn { margin-left: auto; padding: 0 4px; font-size: 12px; }
 
-      .tc-voice-notice {
-        padding: 6px 18px;
-        font-size: 11px;
-        color: #fde68a;
-        background: rgba(245, 158, 11, 0.12);
-      }
-
-      .tc-speak-btn {
-        margin-left: auto;
-        padding: 0 4px;
-        font-size: 12px;
-      }
-
-      .tc-risk-tag {
-        font-size: 10px;
-        font-weight: 700;
-        padding: 1px 6px;
-        border-radius: 4px;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-      }
-
-      .tc-risk-high { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
-      .tc-risk-medium { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
-
-      .tc-btn-view {
-        flex: 0 0 auto;
-        background: #1e293b;
-        color: #93c5fd;
-        border-color: #334155;
-      }
-
-      .tc-btn-view:hover { background: #334155; color: #ffffff; }
-
-      /* Recommendation Bar */
+      /* Recommendation Verdict Bar */
       .tc-reco {
-        padding: 10px 18px;
+        padding: 10px 14px;
+        margin: 0 18px 10px;
+        border-radius: 10px;
         font-size: 12px;
-        font-weight: 600;
-        border-top: 1px solid #1e293b;
+        font-weight: 700;
+        line-height: 1.4;
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
-      .tc-reco-danger { background: rgba(220, 38, 38, 0.2); color: #fecaca; border-top-color: #dc2626; }
-      .tc-reco-warn { background: rgba(245, 158, 11, 0.15); color: #fde68a; border-top-color: #f59e0b; }
-      .tc-reco-safe { background: rgba(16, 185, 129, 0.15); color: #a7f3d0; border-top-color: #10b981; }
-      .tc-reco-pending { background: rgba(148, 163, 184, 0.1); color: #cbd5e1; }
+      .tc-reco-danger {
+        background-color: #fef2f2 !important;
+        border-left: 5px solid #dc2626 !important;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+      }
+
+      .tc-reco-warn {
+        background-color: #fffbeb !important;
+        border-left: 5px solid #d97706 !important;
+        border: 1px solid #fde68a;
+        color: #92400e;
+      }
+
+      .tc-reco-safe {
+        background-color: #f0fdf4 !important;
+        border-left: 5px solid #16a34a !important;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+      }
+
+      .tc-reco-pending {
+        background-color: #f8fafc;
+        border-left: 5px solid #94a3b8;
+        border: 1px solid #e2e8f0;
+        color: #475569;
+      }
 
       /* Footer */
       .tc-footer {
         padding: 10px 18px;
-        background: #0f172a;
-        border-top: 1px solid #1e293b;
+        background: inherit;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -1146,6 +1960,7 @@
   let voiceRate = 1;
   let voiceName = '';               // preferred browser voice name ('' = best available)
   let settingsOpen = false;
+  let voiceSettingsLoaded = false;
 
   function voiceOn() {
     return voiceEnabled && voiceSupported();
@@ -1379,7 +2194,11 @@
 
   function getPresentCategories() {
     if (!currentAnalysis) return [];
-    return CATEGORIES.filter((c) => currentAnalysis.categories[c] && currentAnalysis.categories[c].present === true);
+    const domainOverrides = (lastOverrides && lastOverrides[currentDomain]) || {};
+    return CATEGORIES.filter((c) => {
+      const d = currentAnalysis.categories[c];
+      return Boolean(d && d.present === true && d.acknowledged !== true && !Object.prototype.hasOwnProperty.call(domainOverrides, c));
+    });
   }
 
   function spokenClause(cat) {
@@ -1517,190 +2336,423 @@
     }
   }
 
+  function getHighestRiskMascotFileName(analysis) {
+    let hasHigh = false;
+    let hasMed = false;
+    let hasLow = false;
+
+    if (analysis && analysis.categories) {
+      CATEGORIES.forEach((catKey) => {
+        if (analysis.categories[catKey]?.present === true) {
+          const level = CATEGORY_META[catKey]?.riskLevel;
+          if (level === 'HIGH') hasHigh = true;
+          else if (level === 'MEDIUM') hasMed = true;
+          else if (level === 'LOW') hasLow = true;
+        }
+      });
+    }
+
+    if (hasHigh) {
+      return 'icons/guardian-high-risk.png';
+    } else if (hasMed) {
+      return 'icons/guardian-medium-risk.png';
+    } else if (hasLow) {
+      return 'icons/guardian-low-risk.png';
+    }
+    return 'icons/guardian-neutral.png';
+  }
+
+  function getHighestRiskMascot(analysis) {
+    const fileName = getHighestRiskMascotFileName(analysis);
+    if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+      try {
+        return chrome.runtime.getURL(fileName);
+      } catch (e) {
+        return fileName;
+      }
+    }
+    return fileName;
+  }
+
   async function renderUI(analysis, profile, overrides) {
-    const root = ensureShadowRoot();
+    if (isDismissedForSession) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) {
+        const container = shadowRoot.querySelector('.tc-widget-container');
+        if (container) container.style.display = 'none';
+      }
+      return;
+    }
+
+    if (!voiceSettingsLoaded) { voiceSettingsLoaded = true; await loadVoiceSettings(); }
     currentAnalysis = analysis;
     lastProfile = profile;
     lastOverrides = overrides;
 
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+
+    // Silent Memory: Only consider categories where present === true AND acknowledged !== true
+    const unacknowledgedActiveCategories = CATEGORIES.filter((catKey) => {
+      const catData = analysis?.categories?.[catKey];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, catKey);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    });
+
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
+
+    // If total number of unacknowledged active risks is 0, check alwaysShowWidget override
+    if (unacknowledgedActiveCategories.length === 0) {
+      if (!alwaysShowWidget) {
+        if (shadowRoot) {
+          shadowRoot.innerHTML = '';
+        }
+        const host = document.getElementById('tc-guardian-host');
+        if (host) {
+          host.style.display = 'none';
+        }
+        return;
+      }
+      isMinimized = true;
+    }
+
+    const root = ensureShadowRoot();
+    const host = document.getElementById('tc-guardian-host');
+    if (host && host.style.display === 'none') {
+      host.style.display = '';
+    }
+    const mascotFileName = getHighestRiskMascotFileName(analysis);
+    const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
+      ? chrome.runtime.getURL(mascotFileName)
+      : mascotFileName;
+
     if (isMinimized) {
       // Count dealbreakers
       let dealbreakerCount = 0;
-      CATEGORIES.forEach((catKey) => {
-        if (analysis.categories[catKey] && analysis.categories[catKey].present) {
-          const st = calculateStatus(catKey, currentDomain, profile, overrides);
-          if (st.code === 'DEALBREAKER') dealbreakerCount++;
-        }
+      unacknowledgedActiveCategories.forEach((catKey) => {
+        const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
+        const no = Number(catStats.no) || 0;
+        const total = Number(catStats.yes || 0) + no;
+        if (total > 0 && no >= 2 && (no / total) >= 0.60) dealbreakerCount++;
       });
 
       root.innerHTML = `
         <style>${getCSS()}</style>
-        <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
-          <span>🛡️</span>
-          <span>TC Guardian</span>
-          ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
-        </button>
+        <div class="tc-widget-container">
+          <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
+            <img class="tc-bubble-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
+            <span>T&C Guardian</span>
+            ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
+            <div class="tc-bubble-close">×</div>
+          </button>
+        </div>
       `;
 
       root.getElementById('tc-expand-btn').addEventListener('click', () => {
         isMinimized = false;
         renderUI(analysis, profile, overrides);
       });
+
+      const bubbleCloseBtn = root.querySelector('.tc-bubble-close');
+      if (bubbleCloseBtn) {
+        bubbleCloseBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          isDismissedForSession = true;
+          const containers = [
+            root.querySelector('.tc-widget-container'),
+            document.querySelector('.tc-widget-container'),
+            document.getElementById('tc-guardian-host')
+          ];
+          containers.forEach((el) => {
+            if (el) el.style.display = 'none';
+          });
+        });
+      }
       return;
     }
 
-    // Filter categories where present === true
-    const presentCategories = CATEGORIES.filter(
-      (catKey) => analysis.categories[catKey] && analysis.categories[catKey].present
-    );
+    // Strictly sort the unacknowledged risk cards by severity: High-risk first, Medium-risk second, Low-risk last
+    const severityRank = { HIGH: 1, MEDIUM: 2, LOW: 3 };
+    const sortedCategories = [...unacknowledgedActiveCategories].sort((a, b) => {
+      const rankA = severityRank[CATEGORY_META[a]?.riskLevel] || 2;
+      const rankB = severityRank[CATEGORY_META[b]?.riskLevel] || 2;
+      return rankA - rankB;
+    });
 
-    let hasDealbreaker = false;
-    const categoryCardsHtml = presentCategories.map((catKey) => {
+    let dealbreakerCount = 0;
+    const categoryCardsHtml = sortedCategories.map((catKey) => {
       const meta = CATEGORY_META[catKey];
-      const data = analysis.categories[catKey];
-      const status = calculateStatus(catKey, currentDomain, profile, overrides);
+      const data = (analysis && analysis.categories && analysis.categories[catKey]) || {};
 
-      if (status.code === 'DEALBREAKER') {
-        hasDealbreaker = true;
+      const catStats = (profile && profile[catKey]) || { yes: 0, no: 0 };
+      const yes = Number(catStats.yes) || 0;
+      const no = Number(catStats.no) || 0;
+      const total = yes + no;
+
+      // Check current site override
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, catKey);
+      const isCurrentYes = hasOverride && domainOverrides[catKey] === true;
+      const isCurrentNo = hasOverride && domainOverrides[catKey] === false;
+
+      let overrideBadgeHtml = '';
+      if (hasOverride) {
+        overrideBadgeHtml = `<span class="tc-override-pill ${isCurrentYes ? 'pill-yes' : 'pill-no'}">${isCurrentYes ? '✓ Chosen: YES' : '✕ Chosen: NO'}</span>`;
+      } else if (total > 0 && no >= 2 && (no / total) >= 0.60) {
+        overrideBadgeHtml = `<span class="tc-dealbreaker-pill">⚠️ Normally Rejected</span>`;
+        dealbreakerCount++;
       }
 
-      const isCurrentYes = status.overrideValue === true;
-      const isCurrentNo = status.overrideValue === false;
+      const isDealbreaker = !hasOverride && total > 0 && no >= 2 && (no / total) >= 0.60;
+      const sourceSnippet = (sourceClauses && sourceClauses[catKey]) || data.snippet || data.summary || '';
+      const shortSummaryText = data.shortSummary || data.summary || meta.defaultSummary;
+      const riskClass = meta.riskLevel === 'HIGH' ? 'risk-high' : (meta.riskLevel === 'LOW' ? 'risk-low' : 'risk-med');
+
+      // Resolution Guide UI: If a risk contains optOutSteps (or falls under Medium/High severity with steps available)
+      let resolutionGuideHtml = '';
+      const fallbackSteps = getFallbackResolutionSteps(catKey, currentDomain);
+      const steps = (Array.isArray(data.optOutSteps) && data.optOutSteps.length > 0)
+        ? data.optOutSteps
+        : ((catKey === 'AUTO_RENEW' && data.cancellationGuide?.steps) || fallbackSteps);
+
+      const rawOptOutLink = (typeof data.optOutLink === 'string' && data.optOutLink.trim())
+        ? data.optOutLink.trim()
+        : ((catKey === 'AUTO_RENEW' && typeof data.cancellationGuide?.url === 'string') ? data.cancellationGuide.url.trim() : '');
+      const isSecureOptOutLink = /^https:\/\//i.test(rawOptOutLink);
+
+      if (Array.isArray(steps) && steps.length > 0 && (meta.riskLevel === 'HIGH' || meta.riskLevel === 'MEDIUM' || (Array.isArray(data.optOutSteps) && data.optOutSteps.length > 0))) {
+        resolutionGuideHtml = `
+          <details class="tc-resolution-guide">
+            <summary>How to solve this</summary>
+            <div class="tc-resolution-content">
+              <ol class="tc-resolution-steps">
+                ${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}
+              </ol>
+              ${isSecureOptOutLink ? `
+                <div class="tc-resolution-link-wrapper">
+                  <a class="tc-resolution-link" href="${escapeHtml(rawOptOutLink)}" target="_blank" rel="noopener noreferrer">
+                    <span>Direct Resolution Link</span>
+                    <span>↗</span>
+                  </a>
+                </div>
+              ` : ''}
+            </div>
+          </details>
+        `;
+      }
 
       return `
-        <div class="tc-card ${status.code === 'DEALBREAKER' ? 'tc-card-dealbreaker' : ''}">
+        <div class="tc-card tc-risk-item ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}" data-cat="${catKey}">
           <div class="tc-card-header">
-            <span class="tc-card-title">${meta.icon} ${meta.name}</span>
-            <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
+            <span class="tc-card-title">${meta.icon} ${escapeHtml(meta.name)}</span>
             ${voiceOn() ? `<button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>` : ''}
+            ${overrideBadgeHtml}
           </div>
-          <div>
-            <span class="tc-badge ${status.badgeType}">${status.badgeText}</span>
-          </div>
-          ${buildQuestionHtml(catKey, data)}
+
+          <div class="tc-card-question">Is this risk okay with you?</div>
+
+          <!-- Injected shortSummary text above original clause snippet -->
+          <div class="tc-card-short-summary">${escapeHtml(shortSummaryText)}</div>
+
+          <!-- Native <details> and <summary> elements for View Clause toggle -->
+          ${sourceSnippet ? `
+            <details class="tc-clause-details">
+              <summary class="tc-clause-summary">
+                <span>📖 View Clause</span>
+              </summary>
+              <div class="tc-quote">
+                "${escapeHtml(sourceSnippet)}"
+              </div>
+              ${canJumpToClause(catKey) ? `
+                <div style="margin-top: 8px;">
+                  <button class="tc-btn tc-btn-view tc-view-btn" data-cat="${catKey}" title="Jump to this clause in the terms">
+                    <span>↗ Jump to page location</span>
+                  </button>
+                </div>
+              ` : ''}
+            </details>
+          ` : ''}
+
+          <!-- Resolution / Opt-Out Guide for Medium and High Risk alerts -->
+          ${resolutionGuideHtml}
+
           <div class="tc-card-actions">
-            <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes">
-              ${isCurrentYes ? '✓ ' : ''}Accept (Yes)
+            <button class="tc-btn tc-btn-yes ${isCurrentYes ? 'active' : ''}" data-cat="${catKey}" data-choice="yes" title="Accept this clause">
+              ${isCurrentYes ? '✓ ' : ''}Yes
             </button>
-            <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no">
-              ${isCurrentNo ? '✕ ' : ''}Unacceptable (No)
+            <button class="tc-btn tc-btn-no ${isCurrentNo ? 'active' : ''}" data-cat="${catKey}" data-choice="no" title="Reject this clause">
+              ${isCurrentNo ? '✕ ' : ''}No
             </button>
-            ${canJumpToClause(catKey) ? `<button class="tc-btn tc-btn-view tc-view-btn" data-cat="${catKey}" title="Jump to this clause in the terms">📖 View Clause</button>` : ''}
           </div>
         </div>
       `;
     }).join('');
 
-    const recommendationHtml = presentCategories.length > 0
-      ? buildRecommendationHtml(presentCategories, overrides)
-      : '';
+    const emptyHtml = `
+      <div class="tc-empty">
+        <div class="tc-empty-icon">🎉</div>
+        <div style="font-weight: 600; color: #f8fafc; margin-bottom: 4px;">No Critical Red Flags Found</div>
+        <div>This agreement did not trigger any of the monitored high-risk categories.</div>
+      </div>
+    `;
 
     root.innerHTML = `
       <style>${getCSS()}</style>
-      <div class="tc-widget">
-        <!-- Header -->
-        <div class="tc-header">
-          <div class="tc-header-title-row">
-            <span class="tc-logo-badge">TCG</span>
-            <div class="tc-title">
-              <span>TC Guardian</span>
+      <div class="tc-widget-container">
+        <div class="tc-widget">
+          <!-- Header -->
+          <div class="tc-header">
+            <div class="tc-header-title-row">
+              <span class="tc-logo-badge">
+                <img class="tc-header-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
+                <span>T&C Guardian</span>
+              </span>
               <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
             </div>
+            <div class="tc-header-actions">
+              ${voiceOn() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
+              ${voiceOn() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
+              ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-settings-btn" title="Voice settings" aria-expanded="${settingsOpen}">⚙️</button>` : ''}
+              <button class="tc-icon-btn tc-minimize-btn" id="tc-minimize-btn" title="Minimize">−</button>
+              <button class="tc-icon-btn tc-close-btn" id="tc-close-btn" title="Close">&times;</button>
+            </div>
           </div>
-          <div class="tc-header-actions">
-            ${voiceOn() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
-            ${voiceOn() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
-            ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-settings-btn" title="Voice settings" aria-expanded="${settingsOpen}">⚙️</button>` : ''}
-            <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
-            <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
+
+          ${settingsOpen && voiceSupported() ? buildSettingsHtml() : ''}
+          <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
+
+          <!-- Cards List -->
+          <div class="tc-body">
+            ${categoryCardsHtml || emptyHtml}
           </div>
-        </div>
 
-        <!-- Subheader Meta -->
-        <div class="tc-subbar">
-          <span class="tc-engine-pill">${escapeHtml(analysis.engine)}</span>
-          <span class="tc-subbar-right">
-            <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
-          </span>
-        </div>
-        ${settingsOpen && voiceSupported() ? buildSettingsHtml() : ''}
-        <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
-
-        <!-- Dealbreaker Alert Banner -->
-        ${hasDealbreaker ? `
-          <div class="tc-dealbreaker-banner">
-            <span>🚨</span>
-            <span>Caution: Agreement contains terms you routinely reject!</span>
+          <!-- Footer -->
+          <div class="tc-footer">
+            <span>${sortedCategories.length} active question${sortedCategories.length === 1 ? '' : 's'}</span>
+            <span style="color: #38bdf8;">Choices save instantly</span>
           </div>
-        ` : ''}
-
-        <!-- Cards List -->
-        <div class="tc-body">
-          ${categoryCardsHtml}
-        </div>
-
-        <!-- Recommendation Bar -->
-        ${recommendationHtml}
-
-        <!-- Footer -->
-        <div class="tc-footer">
-          <span>Preferences learn automatically as you answer.</span>
-          <span>${presentCategories.length} clause${presentCategories.length === 1 ? '' : 's'} flagged</span>
         </div>
       </div>
     `;
 
-    // Event Handlers
-    root.getElementById('tc-minimize-btn').addEventListener('click', () => {
-      stopVoice();
-      isMinimized = true;
-      renderUI(analysis, profile, overrides);
-    });
+    // Event Handlers: Manual Minimize and Close Buttons
+    const minBtn = root.getElementById('tc-minimize-btn');
+    if (minBtn) {
+      minBtn.addEventListener('click', () => {
+        isMinimized = true;
+        renderUI(analysis, profile, overrides);
+      });
+    }
 
-    root.getElementById('tc-close-btn').addEventListener('click', () => {
-      stopVoice();
-      isMinimized = true;
-      renderUI(analysis, profile, overrides);
-    });
-
-    root.getElementById('tc-reset-btn').addEventListener('click', async () => {
-      if (confirm('Reset all learned preference history and site overrides?')) {
-        const freshProfile = getDefaultProfile();
-        const freshOverrides = {};
-        await saveStorageData(freshProfile, freshOverrides);
-        renderUI(analysis, freshProfile, freshOverrides);
-      }
-    });
-
-    // View Clause buttons
-    root.querySelectorAll('.tc-view-btn').forEach((btn) => {
-      btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
-    });
+    const closeBtn = root.getElementById('tc-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        isMinimized = true;
+        renderUI(analysis, profile, overrides);
+      });
+    }
 
     // Voice controls
     const readBtn = root.getElementById('tc-voice-read');
-    if (readBtn) {
-      readBtn.addEventListener('click', () => {
-        if (voiceMode) stopVoice(); else readAllAloud();
-      });
-    }
+    if (readBtn) readBtn.addEventListener('click', () => { if (voiceMode) stopVoice(); else readAllAloud(); });
     const answerBtn = root.getElementById('tc-voice-answer');
-    if (answerBtn) {
-      answerBtn.addEventListener('click', () => {
-        if (voiceMode) stopVoice(); else answerByVoice();
-      });
-    }
-    bindSettingsHandlers(root);
+    if (answerBtn) answerBtn.addEventListener('click', () => { if (voiceMode) stopVoice(); else answerByVoice(); });
     root.querySelectorAll('.tc-speak-btn').forEach((btn) => {
-      btn.addEventListener('click', () => readOneAloud(btn.getAttribute('data-cat')));
+      btn.addEventListener('click', (e) => { e.stopPropagation(); readOneAloud(btn.getAttribute('data-cat')); });
     });
+    bindSettingsHandlers(root);
     applyVoiceButtonState();
 
-    // Accept / Reject Buttons
+    // View Clause buttons
+    root.querySelectorAll('.tc-view-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        jumpToClause(btn.getAttribute('data-cat'));
+      });
+    });
+
+    // Accept / Reject Buttons: Multi-Question Persistence
+    // Fade out and remove ONLY the specific risk card (.tc-risk-item) that was answered.
+    // Only trigger full overlay collapse/dismissal when the user has answered the final remaining risk card.
     root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         const target = e.currentTarget;
-        await recordChoice(target.getAttribute('data-cat'), target.getAttribute('data-choice') === 'yes');
+        const catKey = target.getAttribute('data-cat');
+        const choice = target.getAttribute('data-choice');
+        const isYes = (choice === 'yes');
+
+        if (target.disabled) return;
+        target.disabled = true;
+
+        const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+
+        // Increment global counter
+        if (!currentProfile[catKey]) {
+          currentProfile[catKey] = { yes: 0, no: 0 };
+        }
+        if (isYes) {
+          currentProfile[catKey].yes = (currentProfile[catKey].yes || 0) + 1;
+        } else {
+          currentProfile[catKey].no = (currentProfile[catKey].no || 0) + 1;
+        }
+
+        // Set per-site override for domain
+        if (!currentOverrides[currentDomain]) {
+          currentOverrides[currentDomain] = {};
+        }
+        currentOverrides[currentDomain][catKey] = isYes;
+
+        // Save preferences
+        await saveStorageData(currentProfile, currentOverrides);
+
+        // Also notify background worker via SAVE_EXPLICIT_CHOICE
+        if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+          try {
+            chrome.runtime.sendMessage({
+              action: 'SAVE_EXPLICIT_CHOICE',
+              domain: currentDomain,
+              category: catKey,
+              isAccepted: isYes
+            });
+          } catch (err) {}
+        }
+
+        // Target the specific risk card (.tc-risk-item)
+        const card = target.closest('.tc-risk-item') || target.closest('.tc-card');
+        if (card) {
+          card.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.96)';
+
+          setTimeout(() => {
+            card.remove();
+
+            // Check if there are any remaining risk cards
+            const remainingCards = root.querySelectorAll('.tc-risk-item');
+            if (remainingCards.length === 0) {
+              // Final remaining card answered: trigger full overlay collapse/dismissal into minimized bubble
+              isMinimized = true;
+              const widget = root.querySelector('.tc-widget');
+              if (widget) {
+                widget.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+                widget.style.opacity = '0';
+                widget.style.transform = 'translateY(10px)';
+                setTimeout(() => {
+                  renderUI(analysis, currentProfile, currentOverrides);
+                }, 200);
+              } else {
+                renderUI(analysis, currentProfile, currentOverrides);
+              }
+            } else {
+              // Update footer question count
+              const footerCount = root.querySelector('.tc-footer span');
+              if (footerCount) {
+                footerCount.textContent = `${remainingCards.length} active question${remainingCards.length === 1 ? '' : 's'}`;
+              }
+            }
+          }, 250);
+        }
       });
     });
   }
@@ -1720,16 +2772,9 @@
    */
   let initStarted = false;
   async function init() {
-    if (initStarted) return;
-    initStarted = true;
-    try {
-      await runInit();
-    } catch (e) {
-      console.warn('[T&C Guardian] init failed:', e);
-    }
-  }
+    // Cache Invalidation: Clear local storage/cached analysis results on page load
+    clearCachedAnalysis();
 
-  async function runInit() {
     let rawText = '';
     let remoteUrl = null;
 
@@ -1737,8 +2782,8 @@
       // Analyze current page text
       rawText = (document.body && (document.body.innerText || document.body.textContent)) || '';
       buildClauseRefsFromDom();
-    } else if (hasSignupIndicators()) {
-      // Sign-up context: silently pre-fetch the linked terms
+    } else {
+      // Look for linked terms (on signup/checkout or general pages with terms link)
       const termsUrl = findTermsLink();
       if (termsUrl) {
         clauseSourceUrl = termsUrl;
@@ -1763,15 +2808,36 @@
       }
     }
 
-    // Run analysis via message passing or standalone fallback
+    // Extract and map source paragraph excerpts for deep-linking
+    sourceClauses = extractSourceClauses(rawText);
+
+    // Run analysis via message passing or standalone fallback (updates background toolbar badge silently!)
     analysisData = await requestAnalysis(filtered, currentDomain, remoteUrl);
 
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
 
-    // Only surface the pop-up when at least one red flag is active
-    const hasFlags = CATEGORIES.some((c) => analysisData.categories[c] && analysisData.categories[c].present === true);
-    if (!hasFlags) return;
+    // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
+    const unackCount = CATEGORIES.filter((c) => {
+      const catData = analysisData && analysisData.categories && analysisData.categories[c];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, c);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    }).length;
+
+    if (unackCount === 0 && !alwaysShowWidget) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) shadowRoot.innerHTML = '';
+      return;
+    }
+
+    // Check if the current page is a Signup, Checkout, or Legal page
+    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
+      // Silent analysis complete! Toolbar badge is updated in background.js, do not inject overlay.
+      return;
+    }
 
     await loadVoiceSettings();
     renderUI(analysisData, profile, overrides);
@@ -1780,20 +2846,63 @@
     if (voiceAutoRead && voiceOn()) readAllAloud();
   }
 
-  // Voices load asynchronously in Chrome: refresh the settings list when they arrive
-  try {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.addEventListener('voiceschanged', () => {
-        if (settingsOpen && currentAnalysis && lastProfile) renderUI(currentAnalysis, lastProfile, lastOverrides);
-      });
-    }
-  } catch (e) { /* ignore */ }
+  // Read-only State Rendering: Listen for background worker's broadcast of validated analysis
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.action === 'TAB_ANALYSIS_FINALIZED' && message.result) {
+        handleFinalizedAnalysis(message.result);
+      }
+    });
+  }
 
-  // Stop any speech when leaving the page
-  window.addEventListener('pagehide', () => {
-    stopTtsAudio();
-    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
-  });
+  // Dynamic Storage Listener: Re-render UI when always-show widget setting or overrides change
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] || changes[STORAGE_KEYS.SITE_OVERRIDES])) {
+        if (analysisData) {
+          getStorageData().then(({ profile, overrides }) => {
+            renderUI(analysisData, profile, overrides);
+          });
+        }
+      }
+    });
+  }
+
+  async function handleFinalizedAnalysis(finalizedResult) {
+    if (isDismissedForSession) {
+      return;
+    }
+    if (!finalizedResult || !finalizedResult.success || !finalizedResult.data) {
+      return;
+    }
+    const normalized = normalizeAnalysisResult(finalizedResult);
+    analysisData = normalized;
+
+    const { profile, overrides } = await getStorageData();
+    const domainOverrides = (overrides && overrides[currentDomain]) || {};
+    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
+
+    // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
+    const unackCount = CATEGORIES.filter((c) => {
+      const catData = normalized.categories?.[c];
+      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, c);
+      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
+    }).length;
+
+    if (unackCount === 0 && !alwaysShowWidget) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) shadowRoot.innerHTML = '';
+      return;
+    }
+
+    // Check if the current page is a Signup, Checkout, or Legal page
+    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
+      return;
+    }
+
+    renderUI(normalized, profile, overrides);
+  }
 
   // Run when document is ready
   if (document.readyState === 'loading') {

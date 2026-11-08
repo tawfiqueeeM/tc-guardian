@@ -10,7 +10,7 @@ To prevent Git merge conflicts and race conditions, each developer strictly owns
 
 | Developer | Owned Files | Description |
 | :--- | :--- | :--- |
-| **Developer A** | `manifest.json`<br>`background.js`<br>`popup.html`<br>`popup.js`<br>`config.example.js`<br>`config.js`<br>`.gitignore`<br>`CLAUDE.md` | Background service worker, popup dashboard, API integrations (ToS;DR, Opera/Chromium AI, Gemini Flash), project configurations, and manifest definition. |
+| **Developer A** | `manifest.json`<br>`background.js`<br>`popup.html`<br>`popup.js`<br>`popup.css`<br>`icons/*`<br>`config.example.js`<br>`config.js`<br>`.gitignore`<br>`CLAUDE.md` | Background service worker, popup dashboard ("This Website" primary view & "Preferences" secondary view), dynamic toolbar icon switching, API integrations (ToS;DR, Opera/Chromium AI, Gemini Flash, Groq, Cerebras, OpenRouter), project configurations, and manifest definition. |
 | **Developer B** | `content.js`<br>`test-signup.html`<br>`dummy-terms.html` | Page detection, background link pre-fetching, Shadow DOM floating UI overlay, user preference learning & storage. |
 
 > **CRITICAL RULE**: Neither developer may edit, delete, or commit files owned by the other developer under any circumstances.
@@ -37,31 +37,65 @@ All communication between the content script (`content.js`) and background servi
 ```typescript
 {
   success: boolean,
-  engine: "ToS;DR" | "Opera Web AI" | "Gemini Flash",
+  engine: "ToS;DR" | "Opera Web AI" | "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter",
   data: {
     DATA_SALE: {
       present: boolean,
-      summary: string
+      summary: string,
+      shortSummary: string, // Concise 1-2 sentence plain-English summary (< 150 chars)
+      snippet: string       // Extracted clause quote from source text (max 250 chars)
     },
     AI_TRAINING: {
       present: boolean,
-      summary: string
+      summary: string,
+      shortSummary: string,
+      snippet: string
     },
     AUTO_RENEW: {
       present: boolean,
-      summary: string
+      summary: string,
+      shortSummary: string,
+      snippet: string,
+      cancellationGuide?: {
+        domain: string,
+        url: string | null,
+        steps: string[]
+      }
     },
     NO_DELETE: {
       present: boolean,
-      summary: string
+      summary: string,
+      shortSummary: string,
+      snippet: string
     },
     WAIVE_RIGHTS: {
       present: boolean,
-      summary: string
+      summary: string,
+      shortSummary: string,
+      snippet: string
     }
   }
 }
 ```
+
+### 2.1 Background-to-Popup Result Retrieval & Toolbar Icon Contract
+
+`background.js` caches tab analysis records keyed by `tabId` and validates page identity (URL origin & pathname). Navigation to a different URL clears stale results and resets the toolbar icon.
+
+- **`GET_TAB_ANALYSIS`** (Sent by `popup.js`):
+  `{ action: "GET_TAB_ANALYSIS", tabId: number, url?: string, domain?: string }`
+  Returns cached analysis or `{ success: false, reason: "NOT_ANALYZED" | "STALE_NAV" }`.
+- **`STORE_TAB_ANALYSIS`** (Sent by `popup.js` on manual scan):
+  `{ action: "STORE_TAB_ANALYSIS", tabId: number, url: string, domain: string, result: object }`
+- **Dynamic Toolbar Icon & Severity Mapping**:
+  - `HIGH` (`DATA_SALE` or `WAIVE_RIGHTS` present): `icons/guardian-high-risk.png`, badge background `#dc2626` (red)
+  - `MEDIUM` (`AI_TRAINING` or `AUTO_RENEW` present): `icons/guardian-medium-risk.png`, badge background `#d97706` (amber)
+  - `LOW` (`NO_DELETE` present) / `CLEAN` (0 findings): `icons/guardian-low-risk.png`, badge background `#16a34a` (green)
+  - **Numeric Badge**: OffscreenCanvas dynamic icon rendering with custom notification indicator and active risk count. Cleared when count is 0 or on tab navigation.
+- **Conditional In-Page Overlay UX**:
+  - Content script analyzes terms silently on all pages so `background.js` can update the toolbar badge without interrupting browsing.
+  - In-page floating overlay is only rendered on Signup, Checkout, or Legal pages (`isSignupCheckoutOrLegalPage()`).
+  - Clicking `[ Yes ]` (accepting clauses) immediately closes and hides the floating overlay out of the user's way.
 
 ---
 
@@ -92,12 +126,15 @@ When `background.js` receives `ANALYZE_TC`:
 2. **Tier 2 — Local Browser AI (`Opera Web AI` / Chromium Prompt API)**:
    - Evaluates `self.ai && self.ai.languageModel` inside the service worker.
    - If available, runs prompt locally on device and returns `engine: "Opera Web AI"`.
-3. **Tier 3 — Cloud Fallback (`Gemini Flash` / `Groq` / `Cerebras` / `OpenRouter`)**:
-   - Calls configured Cloud LLM provider (Google Gemini Flash, Groq, Cerebras, or OpenRouter) with strict JSON response formatting.
-   - Returns `engine: "Gemini Flash" | "Groq" | "Cerebras" | "OpenRouter"`.
-4. **10-Second Guaranteed Fallback**:
+3. **Tier 3 — Multi-Provider Cloud Fallback Ring (`CONFIG.PROVIDER_FALLBACK_ORDER`)**:
+   - Iterates asynchronously through `CONFIG.PROVIDER_FALLBACK_ORDER` (`Cerebras` -> `Groq` -> `OpenRouter` -> `Gemini`) using individual provider timeouts (`CONFIG.PROVIDER_TIMEOUT_MS = 3000`).
+   - Automatically rolls over to the next provider if rate-limited (HTTP 429), errored, or slow.
+   - Enforces strict structured JSON schema with exact snippet extraction.
+   - Returns `engine: "Cerebras" | "Groq" | "OpenRouter" | "Gemini Flash"`.
+4. **10-Second Guaranteed Fallback & High-Confidence Dynamic Detection**:
    - If AI or ToS;DR APIs fail, throw an error, or time out after 10 seconds, `background.js` never fails silently.
-   - It returns a fallback payload where all 5 categories (`DATA_SALE`, `AI_TRAINING`, `AUTO_RENEW`, `NO_DELETE`, `WAIVE_RIGHTS`) are set to `{ present: true, summary: "Fallback detection: Clause detected requiring explicit user choice." }` to ensure the UI options always render for testing.
+   - It dynamically evaluates `sourceText` via strict high-confidence keyword matchers: requiring explicit high-risk phrases (e.g. "sell your personal information", "monetize your data") rather than generic words ("privacy", "cookies", "third-party", "cancel", "delete"). Categories with genuine risks are set to `present: true`, while clean or absent categories are set to `present: false`.
+   - **Zero-Risk Default for Strict Documentation**: Only applies to strict educational/open-source domains (e.g. `wikipedia.org`, `mozilla.org`, `python.org`, `.edu`). Regular commercial platforms (e.g. Quora, Reddit, Netflix, Stack Overflow) use standard keyword and AI detection and are never suppressed, ensuring clean technical documentation displays 0 questions while commercial sites trigger appropriate alerts when risk clauses match.
 
 ---
 
