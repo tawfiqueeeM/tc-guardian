@@ -2977,6 +2977,36 @@
     try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
   });
 
+  // Apply voice settings changed from the toolbar popup without a page reload
+  try {
+    if (chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local' || !changes[VOICE_KEY]) return;
+        const wasEnabled = voiceEnabled;
+        loadVoiceSettings().then(() => {
+          voiceEngine = null; pinnedBrowserVoice = null; ttsDisabled = false;
+          if (wasEnabled && !voiceEnabled) stopVoice();
+          if (currentAnalysis && lastProfile) renderUI(currentAnalysis, lastProfile, lastOverrides);
+        });
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  // Voices load asynchronously in Chrome: refresh the settings list when they arrive
+  try {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.addEventListener('voiceschanged', () => {
+        if (settingsOpen && currentAnalysis && lastProfile) renderUI(currentAnalysis, lastProfile, lastOverrides);
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  // Stop any speech when leaving the page
+  window.addEventListener('pagehide', () => {
+    stopTtsAudio();
+    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  });
+
   // Run when document is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
