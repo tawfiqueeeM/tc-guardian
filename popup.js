@@ -227,15 +227,6 @@ async function fetchActiveTab() {
 }
 
 async function loadTabAnalysis() {
-  const domainEl = document.getElementById('currentSiteDomain');
-  const pillEl = document.getElementById('currentSitePill');
-  const subEl = document.getElementById('currentSiteSub');
-  const engineBadge = document.getElementById('engineBadge');
-
-  if (domainEl) domainEl.textContent = activeTabInfo.domain;
-  if (pillEl) pillEl.textContent = activeTabInfo.domain;
-  if (subEl) subEl.textContent = 'Checking stored analysis...';
-
   if (!activeTabInfo.id || !activeTabInfo.url.startsWith('http')) {
     renderUnanalyzedState(activeTabInfo.domain, 'Non-HTTP page or internal browser tab.');
     return;
@@ -353,24 +344,9 @@ function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', 
   const pillBadge = document.getElementById('heroPillBadge');
   const headline = document.getElementById('heroHeadline');
   const subtext = document.getElementById('heroSubtext');
-  const subEl = document.getElementById('currentSiteSub');
-  const engineBadge = document.getElementById('engineBadge');
-  const footerEngine = document.getElementById('engineAttribution');
-
   if (!container) return;
 
   const risk = evaluateRisk(data);
-  const isFallback = /fallback/i.test(engine);
-  const engineDisplay = isFallback ? 'Fallback Detection (Keywords)' : engine;
-
-  if (subEl) subEl.textContent = `${engineDisplay} analysis`;
-  if (engineBadge) {
-    engineBadge.textContent = isFallback ? 'Keyword Fallback' : engine;
-    engineBadge.style.display = 'inline-block';
-  }
-  if (footerEngine) {
-    footerEngine.textContent = `Analysis engine: ${engineDisplay}`;
-  }
 
   // Apply Theme & Mascot
   let themeClass = 'theme-clean';
@@ -436,82 +412,80 @@ function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', 
     return;
   }
 
-  // Render Present Categories (Sorted: High -> Medium -> Low)
+  // Render Present Categories (Sorted: High -> Medium -> Low) as Compact Accordions
   const severityOrder = { High: 1, Medium: 2, Low: 3 };
   const presentKeys = CATEGORIES.filter((k) => data[k]?.present === true).sort((a, b) => {
     return severityOrder[CATEGORY_CONFIG[a].severity] - severityOrder[CATEGORY_CONFIG[b].severity];
   });
 
-  let cardsHtml = presentKeys.map((catKey) => {
+  const cardsHtml = presentKeys.map((catKey) => {
     const cfg = CATEGORY_CONFIG[catKey];
     const catData = data[catKey] || {};
     const keyFindingText = catData.shortSummary || catData.summary || cfg.defaultShort;
     const snippetText = catData.snippet || '';
 
-    return `
-      <div class="finding-card risk-card ${cfg.severity.toLowerCase()} ${cfg.severityClass}">
-        <div class="finding-header">
-          <div class="finding-icon-wrap ${cfg.severityClass}">
-            ${cfg.icon}
+    // Resolution / Opt-Out Guide inside hidden body
+    const steps = (Array.isArray(catData.optOutSteps) && catData.optOutSteps.length > 0)
+      ? catData.optOutSteps
+      : (catData.cancellationGuide?.steps || (catKey === 'AUTO_RENEW' ? (data.cancellationGuide?.steps || []) : []));
+    const rawOptOutLink = (typeof catData.optOutLink === 'string' && catData.optOutLink.trim())
+      ? catData.optOutLink.trim()
+      : (catData.cancellationGuide?.url || (catKey === 'AUTO_RENEW' ? (data.cancellationGuide?.url || '') : ''));
+    const isSecureOptOutLink = typeof rawOptOutLink === 'string' && /^https:\/\//i.test(rawOptOutLink);
+
+    let resolutionGuideHtml = '';
+    if (Array.isArray(steps) && steps.length > 0) {
+      resolutionGuideHtml = `
+        <div class="finding-resolution-guide">
+          <div class="resolution-guide-title">
+            <span>💡 How to solve this</span>
           </div>
-          <div class="finding-title-area">
-            <div class="finding-title-row">
-              <span class="finding-title">${escapeHtml(cfg.name)}</span>
-              <span class="finding-severity-pill ${cfg.severityClass}">${cfg.severity} risk</span>
-            </div>
-            <div class="finding-finding-label">KEY FINDING</div>
-            <div class="finding-summary-text">${escapeHtml(keyFindingText)}</div>
-          </div>
+          <ol class="resolution-steps-list">
+            ${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}
+          </ol>
+          ${isSecureOptOutLink ? `
+            <a class="btn-resolution-link" href="${escapeHtml(rawOptOutLink)}" target="_blank" rel="noopener noreferrer">
+              <span>Open resolution link</span>
+              <span>↗</span>
+            </a>
+          ` : ''}
         </div>
+      `;
+    }
 
-        ${snippetText ? `
-          <details class="finding-evidence-details">
-            <summary class="finding-evidence-summary">
-              <span>View original clause</span>
-            </summary>
-            <div class="evidence-quote-box">
-              "${escapeHtml(snippetText)}"
-            </div>
-          </details>
-        ` : ''}
-      </div>
-    `;
-  }).join('');
-
-  // If AUTO_RENEW is present, attach the cancellation guide card with accessible native <details> and <summary>
-  if (data.AUTO_RENEW?.present && (data.AUTO_RENEW.cancellationGuide || data.cancellationGuide)) {
-    const guide = data.AUTO_RENEW.cancellationGuide || data.cancellationGuide;
-    const stepsHtml = (guide.steps || []).map((step, idx) => `
-      <div class="cancel-step-item">
-        <span class="step-num-badge">${idx + 1}</span>
-        <span>${escapeHtml(step)}</span>
-      </div>
-    `).join('');
-
-    const rawUrl = typeof guide.url === 'string' ? guide.url.trim() : '';
-    const canOpenBilling = isValidBillingUrl(rawUrl);
-
-    cardsHtml += `
-      <details class="cancel-guide-card" open>
-        <summary class="cancel-guide-header">
-          <div class="cancel-guide-title-row">
-            <span>💡</span>
-            <span>How to Stop Auto-Pay</span>
+    return `
+      <details class="finding-card risk-card ${cfg.severity.toLowerCase()} ${cfg.severityClass}">
+        <summary class="finding-card-header">
+          <div class="finding-header-left">
+            <span class="finding-icon-wrap ${cfg.severityClass}">${cfg.icon}</span>
+            <span class="finding-title">${escapeHtml(cfg.name)}</span>
+          </div>
+          <div class="finding-header-right">
+            <span class="finding-severity-pill ${cfg.severityClass}">${cfg.severity} risk</span>
+            <span class="card-chevron">▸</span>
           </div>
         </summary>
-        <div class="cancel-steps-list">
-          ${stepsHtml}
+
+        <div class="finding-card-body">
+          <div class="finding-finding-label">KEY FINDING</div>
+          <div class="finding-summary-text">${escapeHtml(keyFindingText)}</div>
+
+          ${snippetText ? `
+            <details class="finding-evidence-details">
+              <summary class="finding-evidence-summary">
+                <span>View original clause</span>
+              </summary>
+              <div class="evidence-quote-box">
+                "${escapeHtml(snippetText)}"
+              </div>
+            </details>
+          ` : ''}
+
+          ${resolutionGuideHtml}
         </div>
-        ${canOpenBilling ? `
-          <a class="btn-open-billing" href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener noreferrer">
-            <span>Open billing settings</span>
-            <span>↗</span>
-          </a>
-        ` : ''}
-        <div class="cancel-guide-note">${escapeHtml(guide.domain || domain)} subscription management</div>
       </details>
     `;
-  }
+  }).join('');
 
   container.innerHTML = cardsHtml;
 }
@@ -527,9 +501,6 @@ function renderUnanalyzedState(domain = '', customReason = '') {
   const pillBadge = document.getElementById('heroPillBadge');
   const headline = document.getElementById('heroHeadline');
   const subtext = document.getElementById('heroSubtext');
-  const subEl = document.getElementById('currentSiteSub');
-  const engineBadge = document.getElementById('engineBadge');
-  const footerEngine = document.getElementById('engineAttribution');
 
   activeTabInfo.riskTheme = 'theme-neutral';
   if (currentView === 'website') {
@@ -541,9 +512,6 @@ function renderUnanalyzedState(domain = '', customReason = '') {
   if (pillBadge) pillBadge.textContent = 'Not analyzed';
   if (headline) headline.textContent = 'No policies analyzed yet';
   if (subtext) subtext.textContent = customReason || 'No Terms of Service or Privacy Policy detected automatically on this page.';
-  if (subEl) subEl.textContent = 'No active scan';
-  if (engineBadge) engineBadge.style.display = 'none';
-  if (footerEngine) footerEngine.textContent = 'Analysis not yet performed on this tab.';
 
   if (!container) return;
 
@@ -579,9 +547,6 @@ function renderErrorState(errorMsg = '', domain = '') {
   const pillBadge = document.getElementById('heroPillBadge');
   const headline = document.getElementById('heroHeadline');
   const subtext = document.getElementById('heroSubtext');
-  const subEl = document.getElementById('currentSiteSub');
-  const engineBadge = document.getElementById('engineBadge');
-  const footerEngine = document.getElementById('engineAttribution');
 
   activeTabInfo.riskTheme = 'theme-neutral';
   if (currentView === 'website') {
@@ -593,9 +558,6 @@ function renderErrorState(errorMsg = '', domain = '') {
   if (pillBadge) pillBadge.textContent = 'Analysis error';
   if (headline) headline.textContent = 'Could not analyze policy';
   if (subtext) subtext.textContent = errorMsg || 'An error occurred while fetching or analyzing terms.';
-  if (subEl) subEl.textContent = 'Analysis failed';
-  if (engineBadge) engineBadge.style.display = 'none';
-  if (footerEngine) footerEngine.textContent = 'Scan encountered an error.';
 
   if (!container) return;
 
