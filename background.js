@@ -1555,7 +1555,7 @@ function maybeAutoOpenPopup(tabId, url) {
       chrome.tabs.get(tabId, (tab) => {
         if (chrome.runtime.lastError || !tab || !tab.active) return;
         const p = chrome.action.openPopup({ windowId: tab.windowId });
-        if (p && typeof p.catch === 'function') p.catch(() => {});
+        if (p && typeof p.catch === 'function') p.catch((e) => console.info('[T&C Guardian] openPopup refused:', e?.message || e));
       });
     }
   } catch (e) { /* ignore */ }
