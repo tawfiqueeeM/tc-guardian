@@ -1809,6 +1809,33 @@
         border-radius: 3px;
       }
 
+      .tc-subbar-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .tc-autoread {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        color: #94a3b8;
+      }
+
+      .tc-voice-notice {
+        padding: 6px 18px;
+        font-size: 11px;
+        color: #fde68a;
+        background: rgba(245, 158, 11, 0.12);
+      }
+
+      .tc-speak-btn {
+        margin-left: auto;
+        padding: 0 4px;
+        font-size: 12px;
+      }
+
       .tc-risk-tag {
         font-size: 10px;
         font-weight: 700;
@@ -1907,13 +1934,13 @@
     const answered = presentCategories.filter((c) => Object.prototype.hasOwnProperty.call(domainOverrides, c));
 
     if (rejected.some((c) => CATEGORY_RISK[c] === 'high')) {
-      return { cls: 'tc-reco-danger', text: '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.', spoken: 'High risk violation detected, proceeding is strongly discouraged.' };
+      return { cls: 'tc-reco-danger', text: '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.', spoken: "Honestly, I'd think twice before agreeing to this one." };
     }
     if (rejected.length > 0) {
-      return { cls: 'tc-reco-warn', text: '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.', spoken: 'Minor risk detected, review the highlighted clauses before proceeding.' };
+      return { cls: 'tc-reco-warn', text: '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.', spoken: "Nothing too scary, but take a quick look at the flagged parts before you go on." };
     }
     if (answered.length === presentCategories.length) {
-      return { cls: 'tc-reco-safe', text: '✅ Safe to Proceed.', spoken: 'Safe to proceed.' };
+      return { cls: 'tc-reco-safe', text: '✅ Safe to Proceed.', spoken: "Looks fine to me, you're good to go." };
     }
     return { cls: 'tc-reco-pending', text: 'Answer each flagged clause to get a recommendation.', spoken: '' };
   }
@@ -1944,12 +1971,29 @@
     return window.SpeechRecognition || window.webkitSpeechRecognition || null;
   }
 
+  // User-customisable voice settings (persisted in chrome.storage.local)
+  let voiceEnabled = true;
+  let voiceEngineChoice = 'auto';   // 'auto' = ElevenLabs then browser, 'browser' = browser voice only
+  let voiceRate = 1;
+  let voiceName = '';               // preferred browser voice name ('' = best available)
+  let settingsOpen = false;
+
+  function voiceOn() {
+    return voiceEnabled && voiceSupported();
+  }
+
   function loadVoiceSettings() {
     return new Promise((resolve) => {
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         try {
           chrome.storage.local.get([VOICE_KEY], (res) => {
-            voiceAutoRead = Boolean(res && res[VOICE_KEY] && res[VOICE_KEY].autoRead);
+            const v = (res && res[VOICE_KEY]) || {};
+            voiceAutoRead = Boolean(v.autoRead);
+            voiceEnabled = v.enabled !== false;
+            voiceEngineChoice = v.engine === 'browser' ? 'browser' : 'auto';
+            const r = Number(v.rate);
+            voiceRate = r >= 0.7 && r <= 1.5 ? r : 1;
+            voiceName = typeof v.voiceName === 'string' ? v.voiceName : '';
             resolve();
           });
           return;
@@ -1961,7 +2005,13 @@
 
   function saveVoiceSettings() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      try { chrome.storage.local.set({ [VOICE_KEY]: { autoRead: voiceAutoRead } }); } catch (e) { /* ignore */ }
+      try {
+        chrome.storage.local.set({
+          [VOICE_KEY]: {
+            autoRead: voiceAutoRead, enabled: voiceEnabled, engine: voiceEngineChoice, rate: voiceRate, voiceName
+          }
+        });
+      } catch (e) { /* ignore */ }
     }
   }
 
@@ -2015,7 +2065,7 @@
 
   function speakElevenLabs(text) {
     return new Promise((resolve) => {
-      if (ttsDisabled || !chrome.runtime || !chrome.runtime.sendMessage) { resolve(false); return; }
+      if (ttsDisabled || voiceEngineChoice === 'browser' || !chrome.runtime || !chrome.runtime.sendMessage) { resolve(false); return; }
       let settled = false;
       const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
       const timer = setTimeout(() => done(false), 10000);
@@ -2029,6 +2079,8 @@
           }
           if (voiceCancelled) { done(true); return; }
           const audio = new Audio('data:' + (res.mime || 'audio/mpeg') + ';base64,' + res.audio);
+          audio.playbackRate = voiceRate;
+          try { audio.preservesPitch = true; } catch (e) { /* ignore */ }
           ttsAudio = audio;
           audio.onended = () => { ttsAudio = null; done(true); };
           audio.onerror = () => { ttsAudio = null; done(false); };
@@ -2045,9 +2097,23 @@
   let pinnedBrowserVoice = null;
   function pickBrowserVoice() {
     if (pinnedBrowserVoice) return pinnedBrowserVoice;
-    const voices = window.speechSynthesis.getVoices() || [];
-    pinnedBrowserVoice = voices.find((v) => /^en[-_]US/i.test(v.lang) && v.localService) ||
-      voices.find((v) => /^en/i.test(v.lang)) || voices[0] || null;
+    const all = window.speechSynthesis.getVoices() || [];
+    const chosen = voiceName && all.find((v) => v.name === voiceName);
+    if (chosen) { pinnedBrowserVoice = chosen; return chosen; }
+    const voices = all.filter((v) => /^en/i.test(v.lang));
+    // Prefer neural / premium voices, which sound far less robotic than the defaults
+    const score = (v) => {
+      let n = 0;
+      if (/natural|neural|online/i.test(v.name)) n += 50;
+      if (/premium|enhanced/i.test(v.name)) n += 40;
+      if (/google (us|uk)/i.test(v.name)) n += 30;
+      if (/samantha|ava|allison|serena|daniel|karen|aria|jenny|guy/i.test(v.name)) n += 20;
+      if (/^en[-_]US/i.test(v.lang)) n += 10;
+      if (/compact|espeak|fred|zarvox|trinoids|bad news|bells|boing|whisper/i.test(v.name)) n -= 100;
+      return n;
+    };
+    voices.sort((x, y) => score(y) - score(x));
+    pinnedBrowserVoice = voices[0] || null;
     return pinnedBrowserVoice;
   }
 
@@ -2056,7 +2122,7 @@
       if (!voiceSupported() || !text) { resolve(); return; }
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'en-US';
-      u.rate = 1;
+      u.rate = voiceRate * 0.97;
       u.pitch = 1;
       const v = pickBrowserVoice();
       if (v) u.voice = v;
@@ -2072,7 +2138,7 @@
   let voiceEngine = null; // null | 'eleven' | 'browser'
 
   async function speak(text) {
-    if (!text) return;
+    if (!text || !voiceEnabled) return;
     if (voiceEngine !== 'browser') {
       let ok = await speakElevenLabs(text);
       if (!ok && voiceEngine === 'eleven' && !ttsDisabled && !voiceCancelled) ok = await speakElevenLabs(text);
@@ -2087,6 +2153,63 @@
     await speakBrowser(text);
   }
 
+  function buildSettingsHtml() {
+    const voices = (window.speechSynthesis.getVoices() || []).filter((v) => /^en/i.test(v.lang));
+    const voiceOptions = ['<option value="">Best available</option>']
+      .concat(voices.map((v) => `<option value="${escapeHtml(v.name)}" ${v.name === voiceName ? 'selected' : ''}>${escapeHtml(v.name)}</option>`))
+      .join('');
+    const dis = voiceEnabled ? '' : 'disabled';
+    return `
+      <div class="tc-settings" id="tc-settings">
+        <label class="tc-set-row tc-set-main">
+          <span>Voice assistant</span>
+          <input type="checkbox" id="tc-set-enabled" ${voiceEnabled ? 'checked' : ''}>
+        </label>
+        <label class="tc-set-row"><span>Auto-read on page load</span>
+          <input type="checkbox" id="tc-set-autoread" ${voiceAutoRead ? 'checked' : ''} ${dis}></label>
+        <label class="tc-set-row"><span>Voice</span>
+          <select id="tc-set-engine" ${dis}>
+            <option value="auto" ${voiceEngineChoice === 'auto' ? 'selected' : ''}>Natural (ElevenLabs)</option>
+            <option value="browser" ${voiceEngineChoice === 'browser' ? 'selected' : ''}>Browser voice only</option>
+          </select></label>
+        <label class="tc-set-row"><span>Browser voice</span>
+          <select id="tc-set-voice" ${dis}>${voiceOptions}</select></label>
+        <label class="tc-set-row"><span>Speed <b id="tc-set-rate-val">${voiceRate.toFixed(2)}x</b></span>
+          <input type="range" id="tc-set-rate" min="0.7" max="1.5" step="0.05" value="${voiceRate}" ${dis}></label>
+        <button class="tc-btn tc-set-test" id="tc-set-test" ${dis}>▶ Test voice</button>
+      </div>`;
+  }
+
+  function bindSettingsHandlers(root) {
+    const rerender = () => { if (currentAnalysis) renderUI(currentAnalysis, lastProfile, lastOverrides); };
+    const resetEngine = () => { voiceEngine = null; pinnedBrowserVoice = null; ttsDisabled = false; };
+
+    const gear = root.getElementById('tc-settings-btn');
+    if (gear) gear.addEventListener('click', () => { settingsOpen = !settingsOpen; rerender(); });
+
+    const on = (id, evt, fn) => { const el = root.getElementById(id); if (el) el.addEventListener(evt, fn); };
+    on('tc-set-enabled', 'change', (e) => {
+      voiceEnabled = e.target.checked;
+      if (!voiceEnabled) stopVoice();
+      saveVoiceSettings();
+      rerender();
+    });
+    on('tc-set-autoread', 'change', (e) => { voiceAutoRead = e.target.checked; saveVoiceSettings(); });
+    on('tc-set-engine', 'change', (e) => { voiceEngineChoice = e.target.value; resetEngine(); saveVoiceSettings(); });
+    on('tc-set-voice', 'change', (e) => { voiceName = e.target.value; resetEngine(); saveVoiceSettings(); });
+    on('tc-set-rate', 'input', (e) => {
+      voiceRate = Number(e.target.value) || 1;
+      const lbl = root.getElementById('tc-set-rate-val');
+      if (lbl) lbl.textContent = voiceRate.toFixed(2) + 'x';
+    });
+    on('tc-set-rate', 'change', () => saveVoiceSettings());
+    on('tc-set-test', 'click', async () => {
+      stopVoice();
+      voiceCancelled = false;
+      await speak("Hi, this is how I'll sound when I read the terms to you.");
+    });
+  }
+
   function getPresentCategories() {
     if (!currentAnalysis) return [];
     return CATEGORIES.filter((c) => currentAnalysis.categories[c] && currentAnalysis.categories[c].present === true);
@@ -2094,8 +2217,10 @@
 
   function spokenClause(cat) {
     const data = currentAnalysis.categories[cat];
-    const risk = CATEGORY_RISK[cat] === 'high' ? 'High risk' : 'Medium risk';
-    return `${CATEGORY_META[cat].name}. ${risk}. ${getHeadlineText(data).replace(/[“”"]/g, '')}`;
+    const lead = CATEGORY_RISK[cat] === 'high' ? 'Heads up, this one matters.' : 'Worth knowing.';
+    const body = firstSentence(data.question ? '' : data.summary) || data.question || CATEGORY_META[cat].name;
+    const clean = String(body).replace(/[“”"]/g, '').replace(/[.?!]+$/, '');
+    return `${lead} ${clean}. Are you okay with that?`;
   }
 
   async function readAllAloud() {
@@ -2103,7 +2228,7 @@
     if (cats.length === 0) return;
     voiceCancelled = false;
     setVoiceMode('reading', '');
-    await speak(`T&C Guardian found ${cats.length} flagged ${cats.length === 1 ? 'clause' : 'clauses'} on ${currentDomain}.`);
+    await speak(`I read the terms on ${currentDomain} and found ${cats.length === 1 ? 'one thing' : cats.length + ' things'} worth a look.`);
     for (const cat of cats) {
       if (voiceCancelled) return;
       await speak(spokenClause(cat));
@@ -2165,7 +2290,7 @@
     }
     voiceCancelled = false;
     setVoiceMode('listening', '');
-    await speak(`Let's go through ${cats.length} ${cats.length === 1 ? 'clause' : 'clauses'}. After each one, say yes to accept, no if it is unacceptable, or skip.`);
+    await speak(`Let's go through ${cats.length === 1 ? 'it' : 'them one by one'}. After each, just say yes, no, or skip.`);
 
     for (const cat of cats) {
       if (voiceCancelled) return;
@@ -2180,12 +2305,12 @@
           return;
         }
         answer = parseVoiceAnswer(transcript);
-        if (!answer && attempt === 0) await speak("Sorry, I didn't catch that. Please say yes, no, or skip.");
+        if (!answer && attempt === 0) await speak("Sorry, I missed that. Just say yes, no, or skip.");
       }
       if (voiceCancelled) return;
       if (answer === 'yes' || answer === 'no') {
         await recordChoice(cat, answer === 'yes');
-        await speak(answer === 'yes' ? 'Accepted.' : 'Marked as unacceptable.');
+        await speak(answer === 'yes' ? "Got it, noted." : "Okay, I've marked that as a no.");
       }
     }
 
@@ -2422,6 +2547,7 @@
           <div class="tc-card-header">
             <span class="tc-card-title">${meta.icon} ${meta.name}</span>
             <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
+            ${voiceSupported() ? `<button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>` : ''}
           </div>
 
           <div class="tc-card-question">Is this risk okay with you?</div>
@@ -2486,6 +2612,8 @@
             </div>
           </div>
           <div class="tc-header-actions">
+            ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
+            ${voiceSupported() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
             <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
             <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
           </div>
@@ -2494,8 +2622,12 @@
         <!-- Subheader Meta -->
         <div class="tc-subbar">
           <span class="tc-engine-pill">${escapeHtml(analysis.engine)}</span>
-          <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
+          <span class="tc-subbar-right">
+            ${voiceSupported() ? `<label class="tc-autoread"><input type="checkbox" id="tc-autoread" ${voiceAutoRead ? 'checked' : ''}> Auto-read</label>` : ''}
+            <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
+          </span>
         </div>
+        <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
 
         <!-- Dealbreaker Alert Banner -->
         ${hasDealbreaker ? `
@@ -2541,12 +2673,33 @@
 
     // View Clause buttons
     root.querySelectorAll('.tc-view-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        jumpToClause(btn.getAttribute('data-cat'));
-      });
+      btn.addEventListener('click', () => jumpToClause(btn.getAttribute('data-cat')));
     });
+
+    // Voice controls
+    const readBtn = root.getElementById('tc-voice-read');
+    if (readBtn) {
+      readBtn.addEventListener('click', () => {
+        if (voiceMode) stopVoice(); else readAllAloud();
+      });
+    }
+    const answerBtn = root.getElementById('tc-voice-answer');
+    if (answerBtn) {
+      answerBtn.addEventListener('click', () => {
+        if (voiceMode) stopVoice(); else answerByVoice();
+      });
+    }
+    const autoReadBox = root.getElementById('tc-autoread');
+    if (autoReadBox) {
+      autoReadBox.addEventListener('change', (e) => {
+        voiceAutoRead = e.target.checked;
+        saveVoiceSettings();
+      });
+    }
+    root.querySelectorAll('.tc-speak-btn').forEach((btn) => {
+      btn.addEventListener('click', () => readOneAloud(btn.getAttribute('data-cat')));
+    });
+    applyVoiceButtonState();
 
     // Accept / Reject Buttons
     root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
@@ -2662,7 +2815,16 @@
 
     await loadVoiceSettings();
     renderUI(analysisData, profile, overrides);
+
+    // Chrome only allows speech after user activation on the page, so this may stay silent
+    if (voiceAutoRead && voiceSupported()) readAllAloud();
   }
+
+  // Stop any speech when leaving the page
+  window.addEventListener('pagehide', () => {
+    stopTtsAudio();
+    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  });
 
   // Run when document is ready
   if (document.readyState === 'loading') {

@@ -1711,7 +1711,7 @@ async function handleTtsSpeak(text) {
         headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
         body: JSON.stringify({ text: String(text).slice(0, 1000), model_id: 'eleven_flash_v2_5',
           seed: 42,
-          voice_settings: { stability: 1.0, similarity_boost: 0.9, style: 0, use_speaker_boost: true }
+          voice_settings: { stability: 0.6, similarity_boost: 0.85, style: 0.15, use_speaker_boost: true }
         }),
         signal: controller.signal
       }
