@@ -91,7 +91,7 @@ All communication between the content script (`content.js`) and background servi
   - `HIGH` (`DATA_SALE` or `WAIVE_RIGHTS` present): `icons/guardian-high-risk.png`, badge background `#dc2626` (red)
   - `MEDIUM` (`AI_TRAINING` or `AUTO_RENEW` present): `icons/guardian-medium-risk.png`, badge background `#d97706` (amber)
   - `LOW` (`NO_DELETE` present) / `CLEAN` (0 findings): `icons/guardian-low-risk.png`, badge background `#16a34a` (green)
-  - **Numeric Badge**: `chrome.action.setBadgeText` displays active risk count (`present === true`). Cleared when count is 0 or on tab navigation.
+  - **Numeric Badge**: OffscreenCanvas dynamic icon rendering with custom notification indicator and active risk count. Cleared when count is 0 or on tab navigation.
 - **Conditional In-Page Overlay UX**:
   - Content script analyzes terms silently on all pages so `background.js` can update the toolbar badge without interrupting browsing.
   - In-page floating overlay is only rendered on Signup, Checkout, or Legal pages (`isSignupCheckoutOrLegalPage()`).

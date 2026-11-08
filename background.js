@@ -1336,116 +1336,75 @@ function computeOverallRisk(data) {
 }
 
 const TOOLBAR_ICON_MAP = {
-  HIGH: {
-    "16": "icons/guardian-high-risk.png",
-    "32": "icons/guardian-high-risk.png",
-    "48": "icons/guardian-high-risk.png",
-    "128": "icons/guardian-high-risk.png"
-  },
-  MEDIUM: {
-    "16": "icons/guardian-medium-risk.png",
-    "32": "icons/guardian-medium-risk.png",
-    "48": "icons/guardian-medium-risk.png",
-    "128": "icons/guardian-medium-risk.png"
-  },
-  LOW: {
-    "16": "icons/guardian-low-risk.png",
-    "32": "icons/guardian-low-risk.png",
-    "48": "icons/guardian-low-risk.png",
-    "128": "icons/guardian-low-risk.png"
-  },
-  CLEAN: {
-    "16": "icons/guardian-low-risk.png",
-    "32": "icons/guardian-low-risk.png",
-    "48": "icons/guardian-low-risk.png",
-    "128": "icons/guardian-low-risk.png"
-  },
-  ERROR: {
-    "16": "icons/guardian-neutral.png",
-    "32": "icons/guardian-neutral.png",
-    "48": "icons/guardian-neutral.png",
-    "128": "icons/guardian-neutral.png"
-  },
-  NEUTRAL: {
-    "16": "icons/guardian-neutral.png",
-    "32": "icons/guardian-neutral.png",
-    "48": "icons/guardian-neutral.png",
-    "128": "icons/guardian-neutral.png"
-  }
+  HIGH: '/icons/guardian-high-risk.png',
+  MEDIUM: '/icons/guardian-medium-risk.png',
+  LOW: '/icons/guardian-low-risk.png',
+  CLEAN: '/icons/guardian-low-risk.png',
+  ERROR: '/icons/guardian-neutral.png',
+  NEUTRAL: '/icons/guardian-neutral.png'
 };
 
-function updateToolbarIcon(tabId, riskLevel, riskCount = 0) {
-  if (typeof chrome === 'undefined' || !chrome.action) return;
+async function updateToolbarIcon(tabId, riskLevel, count = 0) {
+  if (typeof chrome === 'undefined' || !chrome.action || !chrome.action.setIcon) return;
 
   const normalizedLevel = String(riskLevel || 'NEUTRAL').toUpperCase();
-  const iconPathObj = TOOLBAR_ICON_MAP[normalizedLevel] || TOOLBAR_ICON_MAP.NEUTRAL;
+  const iconPath = TOOLBAR_ICON_MAP[normalizedLevel] || TOOLBAR_ICON_MAP.NEUTRAL;
 
-  let badgeColor = '#64748b';
-  let badgeText = '';
-
-  if (normalizedLevel === 'HIGH') {
-    badgeColor = '#dc2626'; // Red for high
-    badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
-  } else if (normalizedLevel === 'MEDIUM') {
-    badgeColor = '#d97706'; // Amber for medium
-    badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
-  } else if (normalizedLevel === 'LOW') {
-    badgeColor = '#16a34a'; // Green for low
-    badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
-  } else if (normalizedLevel === 'CLEAN') {
-    badgeColor = '#16a34a'; // Green for clean
-    badgeText = '';
-  } else if (normalizedLevel === 'ERROR') {
-    badgeColor = '#dc2626';
-    badgeText = '!';
-  } else {
-    // UNANALYZED, DEFAULT, etc.
-    badgeColor = '#64748b';
-    badgeText = '';
+  let badgeColor = '#dc2626';
+  if (normalizedLevel === 'MEDIUM') {
+    badgeColor = '#d97706';
+  } else if (normalizedLevel === 'LOW' || normalizedLevel === 'CLEAN') {
+    badgeColor = '#16a34a';
   }
 
-  // Set toolbar icon image explicitly mapping to exact directory filenames (e.g., {"128": "icons/guardian-high-risk.png"})
-  if (chrome.action.setIcon) {
-    try {
-      const setIconDetails = {
-        path: {
-          "16": iconPathObj["16"],
-          "32": iconPathObj["32"],
-          "48": iconPathObj["48"],
-          "128": iconPathObj["128"]
-        }
-      };
-      if (tabId) {
-        setIconDetails.tabId = tabId;
-      }
-      chrome.action.setIcon(setIconDetails, () => {
-        if (chrome.runtime.lastError) {
-          // Silently swallow errors if tab was closed during icon change
-        }
-      });
-    } catch (e) {
-      console.warn('[T&C Guardian] updateToolbarIcon setIcon failed:', e);
-    }
-  }
-
-  // Set numeric badge & background color
   try {
-    if (chrome.action.setBadgeText) {
-      const badgeDetails = { text: badgeText };
-      if (tabId) badgeDetails.tabId = tabId;
-      chrome.action.setBadgeText(badgeDetails, () => {
-        if (chrome.runtime.lastError) {}
+    if (typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap !== 'undefined') {
+      const iconUrl = chrome.runtime.getURL(iconPath);
+      const res = await fetch(iconUrl);
+      const blob = await res.blob();
+      const bitmap = await createImageBitmap(blob);
+
+      const canvas = new OffscreenCanvas(32, 32);
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 32, 32);
+      ctx.drawImage(bitmap, 0, 0, 32, 32);
+      if (typeof bitmap.close === 'function') {
+        bitmap.close();
+      }
+
+      const numericCount = Number(count) || 0;
+      if (numericCount > 0) {
+        const centerX = 24;
+        const centerY = 8;
+        const radius = 7;
+
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+        ctx.fillStyle = badgeColor;
+        ctx.fill();
+
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = (numericCount > 9) ? 'bold 7.5px sans-serif' : 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(numericCount), centerX, centerY + 0.5);
+      }
+
+      const imageData = ctx.getImageData(0, 0, 32, 32);
+      const setIconDetails = tabId
+        ? { tabId: tabId, imageData: { "32": imageData } }
+        : { imageData: { "32": imageData } };
+
+      chrome.action.setIcon(setIconDetails, () => {
+        if (chrome.runtime?.lastError) {}
       });
     }
-    if (chrome.action.setBadgeBackgroundColor && badgeText) {
-      const colorDetails = { color: badgeColor };
-      if (tabId) colorDetails.tabId = tabId;
-      chrome.action.setBadgeBackgroundColor(colorDetails, () => {
-        if (chrome.runtime.lastError) {}
-      });
-    }
-  } catch (e) {
-    console.warn('[T&C Guardian] updateToolbarIcon badge failed:', e);
+  } catch (err) {
+    console.warn('[T&C Guardian] updateToolbarIcon OffscreenCanvas failed:', err);
   }
 }
 

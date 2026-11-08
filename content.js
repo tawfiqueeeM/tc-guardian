@@ -116,6 +116,7 @@
   let analysisData = null;
   let sourceClauses = {};
   let isMinimized = false;
+  let isDismissedForSession = false;
   let shadowRoot = null;
   const currentDomain = (window.location.hostname || 'localhost').replace(/^www\./, '');
 
@@ -877,6 +878,7 @@
     if (!host) {
       host = document.createElement('div');
       host.id = HOST_ID;
+      host.className = 'tc-widget-container';
       (document.body || document.documentElement).appendChild(host);
     }
     if (!shadowRoot) {
@@ -901,6 +903,10 @@
       }
 
       /* Base Floating Widget Container */
+      .tc-widget-container {
+        display: block;
+      }
+
       .tc-widget {
         position: fixed;
         top: 20px;
@@ -958,6 +964,26 @@
       .tc-bubble:hover {
         transform: translateY(-2px);
         background: #f8fafc;
+      }
+
+      .tc-bubble-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        margin-left: 4px;
+        border-radius: 50%;
+        color: #94a3b8;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+
+      .tc-bubble-close:hover {
+        background: #e2e8f0;
+        color: #0f172a;
       }
 
       .tc-bubble-dealbreaker {
@@ -1786,6 +1812,16 @@
   }
 
   async function renderUI(analysis, profile, overrides) {
+    if (isDismissedForSession) {
+      const host = document.getElementById('tc-guardian-host');
+      if (host) host.style.display = 'none';
+      if (shadowRoot) {
+        const container = shadowRoot.querySelector('.tc-widget-container');
+        if (container) container.style.display = 'none';
+      }
+      return;
+    }
+
     const root = ensureShadowRoot();
     const mascotFileName = getHighestRiskMascotFileName(analysis);
     const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
@@ -1806,17 +1842,37 @@
 
       root.innerHTML = `
         <style>${getCSS()}</style>
-        <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
-          <img class="tc-bubble-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
-          <span>T&C Guardian</span>
-          ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
-        </button>
+        <div class="tc-widget-container">
+          <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
+            <img class="tc-bubble-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
+            <span>T&C Guardian</span>
+            ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
+            <div class="tc-bubble-close">×</div>
+          </button>
+        </div>
       `;
 
       root.getElementById('tc-expand-btn').addEventListener('click', () => {
         isMinimized = false;
         renderUI(analysis, profile, overrides);
       });
+
+      const bubbleCloseBtn = root.querySelector('.tc-bubble-close');
+      if (bubbleCloseBtn) {
+        bubbleCloseBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          isDismissedForSession = true;
+          const containers = [
+            root.querySelector('.tc-widget-container'),
+            document.querySelector('.tc-widget-container'),
+            document.getElementById('tc-guardian-host')
+          ];
+          containers.forEach((el) => {
+            if (el) el.style.display = 'none';
+          });
+        });
+      }
       return;
     }
 
@@ -1952,31 +2008,33 @@
 
     root.innerHTML = `
       <style>${getCSS()}</style>
-      <div class="tc-widget">
-        <!-- Header -->
-        <div class="tc-header">
-          <div class="tc-header-title-row">
-            <span class="tc-logo-badge">
-              <img class="tc-header-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
-              <span>T&C Guardian</span>
-            </span>
-            <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
+      <div class="tc-widget-container">
+        <div class="tc-widget">
+          <!-- Header -->
+          <div class="tc-header">
+            <div class="tc-header-title-row">
+              <span class="tc-logo-badge">
+                <img class="tc-header-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
+                <span>T&C Guardian</span>
+              </span>
+              <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
+            </div>
+            <div class="tc-header-actions">
+              <button class="tc-icon-btn tc-minimize-btn" id="tc-minimize-btn" title="Minimize">−</button>
+              <button class="tc-icon-btn tc-close-btn" id="tc-close-btn" title="Close">&times;</button>
+            </div>
           </div>
-          <div class="tc-header-actions">
-            <button class="tc-icon-btn tc-minimize-btn" id="tc-minimize-btn" title="Minimize">−</button>
-            <button class="tc-icon-btn tc-close-btn" id="tc-close-btn" title="Close">&times;</button>
+
+          <!-- Cards List -->
+          <div class="tc-body">
+            ${categoryCardsHtml}
           </div>
-        </div>
 
-        <!-- Cards List -->
-        <div class="tc-body">
-          ${categoryCardsHtml}
-        </div>
-
-        <!-- Footer -->
-        <div class="tc-footer">
-          <span>${presentCategories.length} active question${presentCategories.length === 1 ? '' : 's'}</span>
-          <span style="color: #38bdf8;">Choices save instantly</span>
+          <!-- Footer -->
+          <div class="tc-footer">
+            <span>${presentCategories.length} active question${presentCategories.length === 1 ? '' : 's'}</span>
+            <span style="color: #38bdf8;">Choices save instantly</span>
+          </div>
         </div>
       </div>
     `;
@@ -2174,6 +2232,9 @@
   }
 
   async function handleFinalizedAnalysis(finalizedResult) {
+    if (isDismissedForSession) {
+      return;
+    }
     if (!finalizedResult || !finalizedResult.success || !finalizedResult.data) {
       return;
     }
