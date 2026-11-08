@@ -2489,6 +2489,13 @@
       }
     }
 
+    // Banner: a flagged category the user has historically rejected most of the time (history only, never auto-decides)
+    const hasDealbreaker = unacknowledgedActiveCategories.some((c) => {
+      const st = (profile && profile[c]) || { yes: 0, no: 0 };
+      const total = (Number(st.yes) || 0) + (Number(st.no) || 0);
+      return total > 0 && (Number(st.no) || 0) / total >= 0.6;
+    });
+
     const root = ensureShadowRoot();
     const host = document.getElementById('tc-guardian-host');
     if (host && host.style.display === 'none') {
