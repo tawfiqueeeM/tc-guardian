@@ -2869,6 +2869,8 @@
    */
   let initStarted = false;
   async function init() {
+    if (initStarted) return;
+    initStarted = true;
     // Cache Invalidation: Clear local storage/cached analysis results on page load
     clearCachedAnalysis();
     let rawText = '';
