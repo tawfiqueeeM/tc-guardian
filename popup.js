@@ -296,7 +296,7 @@ async function fetchActiveTab() {
 }
 
 async function loadTabAnalysis() {
-  if (!activeTabInfo.id || !activeTabInfo.url.startsWith('http')) {
+  if (!activeTabInfo.id || (!activeTabInfo.url.startsWith('http') && !activeTabInfo.url.startsWith('file'))) {
     renderUnanalyzedState(activeTabInfo.domain, 'Non-HTTP page or internal browser tab.');
     return;
   }

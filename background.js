@@ -1805,7 +1805,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (shouldFetchPolicy) {
           try {
             const fetchRes = await fetch(policyUrl);
-            if (!fetchRes.ok) {
+            if (!fetchRes.ok && fetchRes.status !== 0) {
               throw new Error(`HTTP ${fetchRes.status}: ${fetchRes.statusText}`);
             }
             const html = await fetchRes.text();

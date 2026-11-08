@@ -427,7 +427,7 @@
       const text = (a.textContent || '').trim();
       const label = a.getAttribute('aria-label') || a.getAttribute('title') || '';
       if (TERMS_LINK_REGEX.test(text) || TERMS_LINK_REGEX.test(label)) {
-        if (/^https?:/i.test(a.href)) return a.href;
+        if (/^(https?|file):/i.test(a.href)) return a.href;
       }
     }
     return null;
@@ -436,7 +436,7 @@
   async function fetchTermsUrl(url) {
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok && response.status !== 0) throw new Error(`HTTP ${response.status}`);
       const html = await response.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
@@ -890,10 +890,15 @@
       }
 
       if (catData) {
-        const isPresent = Boolean(catData.present);
         normalized[catKey] = {
           present: Boolean(catData.present),
-          summary: catData.summary || CATEGORY_META[catKey].defaultSummary
+          summary: catData.summary || CATEGORY_META[catKey].defaultSummary,
+          shortSummary: catData.shortSummary || '',
+          snippet: catData.snippet || '',
+          optOutSteps: Array.isArray(catData.optOutSteps) ? catData.optOutSteps : null,
+          optOutLink: catData.optOutLink || null,
+          cancellationGuide: catData.cancellationGuide || null,
+          acknowledged: Boolean(catData.acknowledged)
         };
       } else {
         normalized[catKey] = {
@@ -901,7 +906,10 @@
           summary: CATEGORY_META[catKey].defaultSummary,
           shortSummary: '',
           snippet: '',
-          cancellationGuide: null
+          optOutSteps: null,
+          optOutLink: null,
+          cancellationGuide: null,
+          acknowledged: false
         };
       }
     });
@@ -2120,15 +2128,24 @@
   function speakBrowser(text) {
     return new Promise((resolve) => {
       if (!voiceSupported() || !text) { resolve(); return; }
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'en-US';
-      u.rate = voiceRate * 0.97;
-      u.pitch = 1;
-      const v = pickBrowserVoice();
-      if (v) u.voice = v;
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      window.speechSynthesis.speak(u);
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'en-US';
+        u.rate = voiceRate * 0.97;
+        u.pitch = 1;
+        const v = pickBrowserVoice();
+        if (v) u.voice = v;
+        u.onend = () => resolve();
+        u.onerror = (e) => {
+          console.warn('[TC-Guardian] Browser speech synthesis error:', e);
+          resolve();
+        };
+        window.speechSynthesis.speak(u);
+      } catch (err) {
+        console.warn('[TC-Guardian] speakBrowser exception:', err);
+        resolve();
+      }
     });
   }
 
@@ -2389,6 +2406,10 @@
   }
 
   async function renderUI(analysis, profile, overrides) {
+    currentAnalysis = analysis;
+    lastProfile = profile;
+    lastOverrides = overrides;
+
     if (isDismissedForSession) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
@@ -2614,14 +2635,13 @@
               </span>
               <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
             </div>
+            <div class="tc-header-actions">
+              ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
+              ${voiceSupported() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
+              <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
+              <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
+            </div>
           </div>
-          <div class="tc-header-actions">
-            ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
-            ${voiceSupported() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
-            <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
-            <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
-          </div>
-        </div>
 
         <!-- Subheader Meta -->
         <div class="tc-subbar">
