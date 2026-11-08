@@ -322,30 +322,15 @@
     const no = Number(catStats.no) || 0;
     const total = yes + no;
 
-    // 2. ASSUMED_YES: yes >= 3 AND yes / (yes + no) >= 0.75
-    if (total > 0 && yes >= 3 && (yes / total) >= 0.75) {
-      return {
-        code: 'ASSUMED_YES',
-        badgeText: `Auto-Assumed YES based on your behavior (Accepted ${yes} times)`,
-        badgeType: 'assumed-yes',
-        overrideValue: null
-      };
+    // 2. Explicit-choice model: never assume an answer. Show history only.
+    let historyText = '';
+    if (total > 0) {
+      const rejectPct = Math.round((no / total) * 100);
+      historyText = ` — Historically rejected ${rejectPct}% of the time (${total} ${total === 1 ? 'answer' : 'answers'})`;
     }
-
-    // 3. DEALBREAKER: no >= 2 AND no / (yes + no) >= 0.60
-    if (total > 0 && no >= 2 && (no / total) >= 0.60) {
-      return {
-        code: 'DEALBREAKER',
-        badgeText: '⚠️ DEALBREAKER — You normally reject this',
-        badgeType: 'dealbreaker',
-        overrideValue: null
-      };
-    }
-
-    // 4. Default: NEW_QUESTION
     return {
       code: 'NEW_QUESTION',
-      badgeText: 'Important Question — Needs Your Answer',
+      badgeText: 'Needs Your Answer' + historyText,
       badgeType: 'new-question',
       overrideValue: null
     };
@@ -397,7 +382,7 @@
       ) {
         return true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 3. Page Title & Meta Tags Check
     try {
@@ -409,7 +394,7 @@
         const content = meta.getAttribute('content') || '';
         if (SIGNUP_CHECKOUT_LEGAL_TITLE_META_REGEX.test(content)) return true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 4. Signup / Checkout Interactive Elements
     try {
@@ -431,7 +416,7 @@
         const action = form.getAttribute('action') || '';
         if (SIGNUP_CHECKOUT_LEGAL_URL_REGEX.test(action)) return true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     return false;
   }
@@ -1817,11 +1802,20 @@
         gap: 8px;
       }
 
-      .tc-reco-danger {
-        background-color: #fef2f2 !important;
-        border-left: 5px solid #dc2626 !important;
-        border: 1px solid #fecaca;
-        color: #991b1b;
+      mark {
+        background: rgba(250, 204, 21, 0.25);
+        color: #fde68a;
+        padding: 0 2px;
+        border-radius: 3px;
+      }
+
+      .tc-risk-tag {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
       }
 
       .tc-reco-warn {
@@ -1877,6 +1871,10 @@
     );
   }
 
+  function getHeadlineText(data) {
+    return data.question || `Do you accept this on ${currentDomain}: "${firstSentence(data.summary)}"?`;
+  }
+
   function getClauseQuote(cat, data) {
     let quote = data.snippet || '';
     if (!quote) {
@@ -1889,7 +1887,7 @@
   }
 
   function buildQuestionHtml(cat, data) {
-    const headline = data.question || `Do you accept this on ${currentDomain}: "${firstSentence(data.summary)}"?`;
+    const headline = getHeadlineText(data);
     const summary = String(data.summary || '').trim();
     const showDetail = !data.question
       ? summary.replace(/\s+/g, ' ').length > firstSentence(summary).length + 1
@@ -1903,21 +1901,328 @@
     `;
   }
 
-  function buildRecommendationHtml(presentCategories, overrides) {
+  function getRecommendation(presentCategories, overrides) {
     const domainOverrides = (overrides && overrides[currentDomain]) || {};
     const rejected = presentCategories.filter((c) => domainOverrides[c] === false);
     const answered = presentCategories.filter((c) => Object.prototype.hasOwnProperty.call(domainOverrides, c));
 
     if (rejected.some((c) => CATEGORY_RISK[c] === 'high')) {
-      return '<div class="tc-reco tc-reco-danger">🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.</div>';
+      return { cls: 'tc-reco-danger', text: '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.', spoken: 'High risk violation detected, proceeding is strongly discouraged.' };
     }
     if (rejected.length > 0) {
-      return '<div class="tc-reco tc-reco-warn">⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.</div>';
+      return { cls: 'tc-reco-warn', text: '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.', spoken: 'Minor risk detected, review the highlighted clauses before proceeding.' };
     }
     if (answered.length === presentCategories.length) {
-      return '<div class="tc-reco tc-reco-safe">✅ Safe to Proceed.</div>';
+      return { cls: 'tc-reco-safe', text: '✅ Safe to Proceed.', spoken: 'Safe to proceed.' };
     }
-    return '<div class="tc-reco tc-reco-pending">Answer each flagged clause to get a recommendation.</div>';
+    return { cls: 'tc-reco-pending', text: 'Answer each flagged clause to get a recommendation.', spoken: '' };
+  }
+
+  function buildRecommendationHtml(presentCategories, overrides) {
+    const r = getRecommendation(presentCategories, overrides);
+    return `<div class="tc-reco ${r.cls}">${r.text}</div>`;
+  }
+
+  /**
+   * Voice assistant: free, keyless, built on the browser's Web Speech API.
+   * - Read aloud: speechSynthesis
+   * - Answer by voice: SpeechRecognition (Chrome sends the audio to Google's speech service)
+   */
+  const VOICE_KEY = 'tc_guardian_voice';
+  let voiceAutoRead = false;
+  let voiceMode = null;          // null | 'reading' | 'listening'
+  let voiceCancelled = false;
+  let activeRecognition = null;
+  let voiceNotice = '';
+  let currentAnalysis = null;
+
+  function voiceSupported() {
+    return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  }
+
+  function recognitionCtor() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  function loadVoiceSettings() {
+    return new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        try {
+          chrome.storage.local.get([VOICE_KEY], (res) => {
+            voiceAutoRead = Boolean(res && res[VOICE_KEY] && res[VOICE_KEY].autoRead);
+            resolve();
+          });
+          return;
+        } catch (e) { /* fall through */ }
+      }
+      resolve();
+    });
+  }
+
+  function saveVoiceSettings() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try { chrome.storage.local.set({ [VOICE_KEY]: { autoRead: voiceAutoRead } }); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function setVoiceMode(mode, notice) {
+    voiceMode = mode;
+    if (notice !== undefined) voiceNotice = notice;
+    applyVoiceButtonState();
+  }
+
+  function applyVoiceButtonState() {
+    if (!shadowRoot) return;
+    const readBtn = shadowRoot.getElementById('tc-voice-read');
+    const answerBtn = shadowRoot.getElementById('tc-voice-answer');
+    if (readBtn) {
+      readBtn.textContent = voiceMode === 'reading' ? '⏹' : '🔊';
+      readBtn.title = voiceMode === 'reading' ? 'Stop' : 'Read flagged clauses aloud';
+    }
+    if (answerBtn) {
+      answerBtn.textContent = voiceMode === 'listening' ? '⏹' : '🎤';
+      answerBtn.title = voiceMode === 'listening' ? 'Stop' : 'Answer by voice (say yes / no / skip)';
+    }
+    const notice = shadowRoot.getElementById('tc-voice-notice');
+    if (notice) {
+      notice.textContent = voiceNotice;
+      notice.style.display = voiceNotice ? 'block' : 'none';
+    }
+  }
+
+  function stopVoice() {
+    voiceCancelled = true;
+    stopTtsAudio();
+    try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+    if (activeRecognition) {
+      try { activeRecognition.abort(); } catch (e) { /* ignore */ }
+      activeRecognition = null;
+    }
+    setVoiceMode(null, '');
+  }
+
+  // ElevenLabs playback (audio is fetched by background.js via TTS_SPEAK).
+  // Any failure resolves false so speak() falls back to the browser voice.
+  let ttsAudio = null;
+  let ttsDisabled = false; // set after a hard failure (no key / quota) to avoid retry delays
+
+  function stopTtsAudio() {
+    if (ttsAudio) {
+      try { ttsAudio.pause(); } catch (e) { /* ignore */ }
+      ttsAudio = null;
+    }
+  }
+
+  function speakElevenLabs(text) {
+    return new Promise((resolve) => {
+      if (ttsDisabled || !chrome.runtime || !chrome.runtime.sendMessage) { resolve(false); return; }
+      let settled = false;
+      const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+      const timer = setTimeout(() => done(false), 10000);
+      try {
+        chrome.runtime.sendMessage({ action: 'TTS_SPEAK', text: text.slice(0, 1000) }, (res) => {
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !res || !res.success || !res.audio) {
+            if (res && res.fatal) ttsDisabled = true;
+            done(false);
+            return;
+          }
+          if (voiceCancelled) { done(true); return; }
+          const audio = new Audio('data:' + (res.mime || 'audio/mpeg') + ';base64,' + res.audio);
+          ttsAudio = audio;
+          audio.onended = () => { ttsAudio = null; done(true); };
+          audio.onerror = () => { ttsAudio = null; done(false); };
+          audio.play().catch(() => { ttsAudio = null; done(false); });
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        done(false);
+      }
+    });
+  }
+
+  // One fixed browser voice for the whole session (used only when ElevenLabs is unavailable).
+  let pinnedBrowserVoice = null;
+  function pickBrowserVoice() {
+    if (pinnedBrowserVoice) return pinnedBrowserVoice;
+    const voices = window.speechSynthesis.getVoices() || [];
+    pinnedBrowserVoice = voices.find((v) => /^en[-_]US/i.test(v.lang) && v.localService) ||
+      voices.find((v) => /^en/i.test(v.lang)) || voices[0] || null;
+    return pinnedBrowserVoice;
+  }
+
+  function speakBrowser(text) {
+    return new Promise((resolve) => {
+      if (!voiceSupported() || !text) { resolve(); return; }
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      u.rate = 1;
+      u.pitch = 1;
+      const v = pickBrowserVoice();
+      if (v) u.voice = v;
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      window.speechSynthesis.speak(u);
+    });
+  }
+
+  // The voice must stay constant: the first engine that works is locked in for
+  // the whole page session. Once ElevenLabs has spoken, we never switch to the
+  // browser voice mid-conversation (a failed line is retried once, then skipped).
+  let voiceEngine = null; // null | 'eleven' | 'browser'
+
+  async function speak(text) {
+    if (!text) return;
+    if (voiceEngine !== 'browser') {
+      let ok = await speakElevenLabs(text);
+      if (!ok && voiceEngine === 'eleven' && !ttsDisabled && !voiceCancelled) ok = await speakElevenLabs(text);
+      if (ok) { voiceEngine = 'eleven'; return; }
+      if (voiceEngine === 'eleven') {
+        if (!voiceCancelled) setVoiceMode(voiceMode, 'Voice unavailable right now — skipped to keep the same voice.');
+        return;
+      }
+      voiceEngine = 'browser'; // ElevenLabs never worked on this page: use one browser voice throughout
+    }
+    if (voiceCancelled) return;
+    await speakBrowser(text);
+  }
+
+  function getPresentCategories() {
+    if (!currentAnalysis) return [];
+    return CATEGORIES.filter((c) => currentAnalysis.categories[c] && currentAnalysis.categories[c].present === true);
+  }
+
+  function spokenClause(cat) {
+    const data = currentAnalysis.categories[cat];
+    const risk = CATEGORY_RISK[cat] === 'high' ? 'High risk' : 'Medium risk';
+    return `${CATEGORY_META[cat].name}. ${risk}. ${getHeadlineText(data).replace(/[“”"]/g, '')}`;
+  }
+
+  async function readAllAloud() {
+    const cats = getPresentCategories();
+    if (cats.length === 0) return;
+    voiceCancelled = false;
+    setVoiceMode('reading', '');
+    await speak(`T&C Guardian found ${cats.length} flagged ${cats.length === 1 ? 'clause' : 'clauses'} on ${currentDomain}.`);
+    for (const cat of cats) {
+      if (voiceCancelled) return;
+      await speak(spokenClause(cat));
+    }
+    if (!voiceCancelled) setVoiceMode(null, '');
+  }
+
+  async function readOneAloud(cat) {
+    stopVoice();
+    voiceCancelled = false;
+    setVoiceMode('reading', '');
+    await speak(spokenClause(cat));
+    if (!voiceCancelled) setVoiceMode(null, '');
+  }
+
+  function listenOnce(timeoutMs) {
+    return new Promise((resolve) => {
+      const Ctor = recognitionCtor();
+      if (!Ctor) { resolve({ transcript: null, error: 'unsupported' }); return; }
+      const rec = new Ctor();
+      rec.lang = 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 3;
+      let done = false;
+      let timer = null;
+      const finish = (transcript, error) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (activeRecognition === rec) activeRecognition = null;
+        resolve({ transcript, error: error || null });
+      };
+      rec.onresult = (e) => {
+        const alts = Array.from(e.results[0] || []).map((a) => a.transcript).join(' ');
+        finish(alts.toLowerCase());
+      };
+      rec.onerror = (ev) => finish(null, ev.error || 'error');
+      rec.onend = () => finish(null);
+      timer = setTimeout(() => { try { rec.stop(); } catch (e) { /* ignore */ } finish(null); }, timeoutMs);
+      activeRecognition = rec;
+      try { rec.start(); } catch (e) { finish(null, 'start-failed'); }
+    });
+  }
+
+  function parseVoiceAnswer(t) {
+    if (!t) return null;
+    if (/\b(skip|next|later|pass)\b/.test(t)) return 'skip';
+    if (/\b(no|not|reject|unacceptable|decline|disagree|never)\b/.test(t)) return 'no';
+    if (/\b(yes|yeah|yep|accept|okay|ok|agree|fine|sure)\b/.test(t)) return 'yes';
+    return null;
+  }
+
+  async function answerByVoice() {
+    const cats = getPresentCategories();
+    if (cats.length === 0) return;
+    if (!recognitionCtor()) {
+      setVoiceMode(null, 'Voice answers are not supported in this browser.');
+      return;
+    }
+    voiceCancelled = false;
+    setVoiceMode('listening', '');
+    await speak(`Let's go through ${cats.length} ${cats.length === 1 ? 'clause' : 'clauses'}. After each one, say yes to accept, no if it is unacceptable, or skip.`);
+
+    for (const cat of cats) {
+      if (voiceCancelled) return;
+      await speak(spokenClause(cat));
+      let answer = null;
+      for (let attempt = 0; attempt < 2 && !answer && !voiceCancelled; attempt++) {
+        setVoiceMode('listening', '🎤 Listening… say yes, no or skip');
+        const { transcript, error } = await listenOnce(8000);
+        if (voiceCancelled) return;
+        if (error === 'not-allowed' || error === 'service-not-allowed') {
+          setVoiceMode(null, 'Microphone access was blocked for this site. Allow it in the address bar to answer by voice.');
+          return;
+        }
+        answer = parseVoiceAnswer(transcript);
+        if (!answer && attempt === 0) await speak("Sorry, I didn't catch that. Please say yes, no, or skip.");
+      }
+      if (voiceCancelled) return;
+      if (answer === 'yes' || answer === 'no') {
+        await recordChoice(cat, answer === 'yes');
+        await speak(answer === 'yes' ? 'Accepted.' : 'Marked as unacceptable.');
+      }
+    }
+
+    if (voiceCancelled) return;
+    const reco = getRecommendation(getPresentCategories(), lastOverrides);
+    if (reco.spoken) await speak(reco.spoken);
+    if (!voiceCancelled) setVoiceMode(null, '');
+  }
+
+  let lastProfile = null;
+  let lastOverrides = null;
+
+  let choiceBusy = false;
+  async function recordChoice(catKey, isYes) {
+    if (choiceBusy) return; // ignore rapid double-clicks
+    choiceBusy = true;
+    try {
+      const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+      const prev = currentOverrides[currentDomain] && currentOverrides[currentDomain][catKey];
+
+      // Re-clicking the same answer must not inflate history counts
+      if (prev !== isYes) {
+        if (!currentProfile[catKey]) currentProfile[catKey] = { yes: 0, no: 0 };
+        const st = currentProfile[catKey];
+        // Changing an answer on this site replaces the earlier vote
+        if (prev === true) st.yes = Math.max(0, (st.yes || 0) - 1);
+        if (prev === false) st.no = Math.max(0, (st.no || 0) - 1);
+        if (isYes) st.yes = (st.yes || 0) + 1; else st.no = (st.no || 0) + 1;
+
+        if (!currentOverrides[currentDomain]) currentOverrides[currentDomain] = {};
+        currentOverrides[currentDomain][catKey] = isYes;
+        await saveStorageData(currentProfile, currentOverrides);
+      }
+      renderUI(currentAnalysis, currentProfile, currentOverrides);
+    } finally {
+      choiceBusy = false;
+    }
   }
 
   function getHighestRiskMascotFileName(analysis) {
@@ -1996,14 +2301,6 @@
     }
 
     const root = ensureShadowRoot();
-    const host = document.getElementById('tc-guardian-host');
-    if (host && host.style.display === 'none') {
-      host.style.display = '';
-    }
-    const mascotFileName = getHighestRiskMascotFileName(analysis);
-    const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
-      ? chrome.runtime.getURL(mascotFileName)
-      : mascotFileName;
 
     if (isMinimized) {
       // Count dealbreakers
@@ -2123,8 +2420,8 @@
       return `
         <div class="tc-card tc-risk-item ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}" data-cat="${catKey}">
           <div class="tc-card-header">
-            <span class="tc-card-title">${meta.icon} ${escapeHtml(meta.name)}</span>
-            ${overrideBadgeHtml}
+            <span class="tc-card-title">${meta.icon} ${meta.name}</span>
+            <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
           </div>
 
           <div class="tc-card-question">Is this risk okay with you?</div>
@@ -2187,11 +2484,26 @@
               </span>
               <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
             </div>
-            <div class="tc-header-actions">
-              <button class="tc-icon-btn tc-minimize-btn" id="tc-minimize-btn" title="Minimize">−</button>
-              <button class="tc-icon-btn tc-close-btn" id="tc-close-btn" title="Close">&times;</button>
-            </div>
           </div>
+          <div class="tc-header-actions">
+            <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
+            <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
+          </div>
+        </div>
+
+        <!-- Subheader Meta -->
+        <div class="tc-subbar">
+          <span class="tc-engine-pill">${escapeHtml(analysis.engine)}</span>
+          <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
+        </div>
+
+        <!-- Dealbreaker Alert Banner -->
+        ${hasDealbreaker ? `
+          <div class="tc-dealbreaker-banner">
+            <span>🚨</span>
+            <span>Caution: Agreement contains terms you routinely reject!</span>
+          </div>
+        ` : ''}
 
           <!-- Cards List -->
           <div class="tc-body">
@@ -2207,22 +2519,25 @@
       </div>
     `;
 
-    // Event Handlers: Manual Minimize and Close Buttons
-    const minBtn = root.getElementById('tc-minimize-btn');
-    if (minBtn) {
-      minBtn.addEventListener('click', () => {
-        isMinimized = true;
-        renderUI(analysis, profile, overrides);
-      });
-    }
+    // Event Handlers
+    root.getElementById('tc-minimize-btn').addEventListener('click', () => {
+      isMinimized = true;
+      renderUI(analysis, profile, overrides);
+    });
 
-    const closeBtn = root.getElementById('tc-close-btn');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => {
-        isMinimized = true;
-        renderUI(analysis, profile, overrides);
-      });
-    }
+    root.getElementById('tc-close-btn').addEventListener('click', () => {
+      isMinimized = true;
+      renderUI(analysis, profile, overrides);
+    });
+
+    root.getElementById('tc-reset-btn').addEventListener('click', async () => {
+      if (confirm('Reset all learned preference history and site overrides?')) {
+        const freshProfile = getDefaultProfile();
+        const freshOverrides = {};
+        await saveStorageData(freshProfile, freshOverrides);
+        renderUI(analysis, freshProfile, freshOverrides);
+      }
+    });
 
     // View Clause buttons
     root.querySelectorAll('.tc-view-btn').forEach((btn) => {
@@ -2233,18 +2548,13 @@
       });
     });
 
-    // Accept / Reject Buttons: Multi-Question Persistence
-    // Fade out and remove ONLY the specific risk card (.tc-risk-item) that was answered.
-    // Only trigger full overlay collapse/dismissal when the user has answered the final remaining risk card.
+    // Accept / Reject Buttons
     root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         const target = e.currentTarget;
         const catKey = target.getAttribute('data-cat');
         const choice = target.getAttribute('data-choice');
         const isYes = (choice === 'yes');
-
-        if (target.disabled) return;
-        target.disabled = true;
 
         const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
 
@@ -2264,56 +2574,9 @@
         }
         currentOverrides[currentDomain][catKey] = isYes;
 
-        // Save preferences
+        // Save & immediately re-render live
         await saveStorageData(currentProfile, currentOverrides);
-
-        // Also notify background worker via SAVE_EXPLICIT_CHOICE
-        if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-          try {
-            chrome.runtime.sendMessage({
-              action: 'SAVE_EXPLICIT_CHOICE',
-              domain: currentDomain,
-              category: catKey,
-              isAccepted: isYes
-            });
-          } catch (err) {}
-        }
-
-        // Target the specific risk card (.tc-risk-item)
-        const card = target.closest('.tc-risk-item') || target.closest('.tc-card');
-        if (card) {
-          card.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
-          card.style.opacity = '0';
-          card.style.transform = 'scale(0.96)';
-
-          setTimeout(() => {
-            card.remove();
-
-            // Check if there are any remaining risk cards
-            const remainingCards = root.querySelectorAll('.tc-risk-item');
-            if (remainingCards.length === 0) {
-              // Final remaining card answered: trigger full overlay collapse/dismissal into minimized bubble
-              isMinimized = true;
-              const widget = root.querySelector('.tc-widget');
-              if (widget) {
-                widget.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-                widget.style.opacity = '0';
-                widget.style.transform = 'translateY(10px)';
-                setTimeout(() => {
-                  renderUI(analysis, currentProfile, currentOverrides);
-                }, 200);
-              } else {
-                renderUI(analysis, currentProfile, currentOverrides);
-              }
-            } else {
-              // Update footer question count
-              const footerCount = root.querySelector('.tc-footer span');
-              if (footerCount) {
-                footerCount.textContent = `${remainingCards.length} active question${remainingCards.length === 1 ? '' : 's'}`;
-              }
-            }
-          }, 250);
-        }
+        renderUI(analysis, currentProfile, currentOverrides);
       });
     });
   }
@@ -2331,10 +2594,8 @@
   /**
    * Main Controller Initialization
    */
+  let initStarted = false;
   async function init() {
-    // Cache Invalidation: Clear local storage/cached analysis results on page load
-    clearCachedAnalysis();
-
     let rawText = '';
     let remoteUrl = null;
 
@@ -2399,65 +2660,8 @@
       return;
     }
 
+    await loadVoiceSettings();
     renderUI(analysisData, profile, overrides);
-  }
-
-  // Read-only State Rendering: Listen for background worker's broadcast of validated analysis
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message?.action === 'TAB_ANALYSIS_FINALIZED' && message.result) {
-        handleFinalizedAnalysis(message.result);
-      }
-    });
-  }
-
-  // Dynamic Storage Listener: Re-render UI when always-show widget setting or overrides change
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === 'local' && (changes[STORAGE_KEYS.ALWAYS_SHOW_WIDGET] || changes[STORAGE_KEYS.SITE_OVERRIDES])) {
-        if (analysisData) {
-          getStorageData().then(({ profile, overrides }) => {
-            renderUI(analysisData, profile, overrides);
-          });
-        }
-      }
-    });
-  }
-
-  async function handleFinalizedAnalysis(finalizedResult) {
-    if (isDismissedForSession) {
-      return;
-    }
-    if (!finalizedResult || !finalizedResult.success || !finalizedResult.data) {
-      return;
-    }
-    const normalized = normalizeAnalysisResult(finalizedResult);
-    analysisData = normalized;
-
-    const { profile, overrides } = await getStorageData();
-    const domainOverrides = (overrides && overrides[currentDomain]) || {};
-    const alwaysShowWidget = await getAlwaysShowWidgetSetting();
-
-    // Silent Memory: If total number of unacknowledged active risks is 0, do not inject, render, or show .tc-widget-container or .tc-bubble at all
-    const unackCount = CATEGORIES.filter((c) => {
-      const catData = normalized.categories?.[c];
-      const hasOverride = Object.prototype.hasOwnProperty.call(domainOverrides, c);
-      return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
-    }).length;
-
-    if (unackCount === 0 && !alwaysShowWidget) {
-      const host = document.getElementById('tc-guardian-host');
-      if (host) host.style.display = 'none';
-      if (shadowRoot) shadowRoot.innerHTML = '';
-      return;
-    }
-
-    // Check if the current page is a Signup, Checkout, or Legal page
-    if (!alwaysShowWidget && !isSignupCheckoutOrLegalPage()) {
-      return;
-    }
-
-    renderUI(normalized, profile, overrides);
   }
 
   // Run when document is ready

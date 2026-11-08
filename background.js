@@ -1692,9 +1692,55 @@ async function finalizeScan(tabId, scanId, result, context = {}) {
 }
 
 /**
+ * ElevenLabs text-to-speech. Returns base64 mp3 so the content script can play it.
+ * `fatal: true` tells the content script to stop retrying on this page.
+ */
+async function handleTtsSpeak(text) {
+  const key = CONFIG.ELEVENLABS_API_KEY;
+  const voice = CONFIG.ELEVENLABS_VOICE_ID;
+  if (!key || !voice || /PASTE_YOUR/.test(key) || !text) {
+    return { success: false, fatal: true };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+        body: JSON.stringify({ text: String(text).slice(0, 1000), model_id: 'eleven_flash_v2_5',
+          seed: 42,
+          voice_settings: { stability: 1.0, similarity_boost: 0.9, style: 0, use_speaker_boost: true }
+        }),
+        signal: controller.signal
+      }
+    );
+    if (!res.ok) {
+      return { success: false, fatal: [401, 402, 403, 429].includes(res.status) };
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return { success: true, audio: btoa(bin), mime: 'audio/mpeg' };
+  } catch (e) {
+    return { success: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Main Message Listener
  */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request?.action === 'TTS_SPEAK') {
+    handleTtsSpeak(request.text).then(sendResponse);
+    return true;
+  }
+
   // Handle ANALYZE_TC and FETCH_AND_ANALYZE_TC
   if (request?.action === 'ANALYZE_TC' || request?.action === 'FETCH_AND_ANALYZE_TC') {
     let text = request.text || '';
