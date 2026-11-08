@@ -73,7 +73,9 @@ body.theme-clean {
 }
 
 body {
-  width: 420px;
+  width: 100%;
+  min-width: 320px;
+  max-width: 420px;
   max-height: 600px;
   background: var(--bg-gradient);
   color: var(--text-main);
@@ -357,6 +359,23 @@ header.app-header {
   font-weight: 500;
 }
 
+.clean-item-text {
+  flex: 1;
+}
+
+.clean-item-link {
+  color: #64748b;
+  text-decoration: none;
+  font-size: 11.5px;
+  margin-left: auto;
+  padding: 0 4px;
+  transition: color 0.15s ease;
+}
+
+.clean-item-link:hover {
+  color: #0f172a;
+}
+
 .clean-check-badge {
   width: 20px;
   height: 20px;
@@ -509,40 +528,62 @@ header.app-header {
   margin-bottom: 3px;
 }
 
-.finding-summary-text {
+.finding-summary-text,
+.summary-text {
   font-size: 12.5px;
   color: #334155;
   line-height: 1.45;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
-/* Evidence Toggle & Snippet */
-.finding-evidence-toggle {
+/* Evidence Details & Snippet (Native Accessible Elements) */
+details.finding-evidence-details {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed rgba(0, 0, 0, 0.08);
 }
 
-.btn-toggle-evidence {
-  background: none;
-  border: none;
+summary.finding-evidence-summary {
+  list-style: none;
+  cursor: pointer;
   color: #64748b;
   font-size: 11.5px;
   font-weight: 600;
-  cursor: pointer;
-  padding: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
   transition: color 0.15s ease;
+  user-select: none;
 }
 
-.btn-toggle-evidence:hover {
+summary.finding-evidence-summary::-webkit-details-marker {
+  display: none;
+}
+
+summary.finding-evidence-summary::after {
+  content: '▸';
+  font-size: 11px;
+  color: #64748b;
+  transition: transform 0.2s ease;
+}
+
+details.finding-evidence-details[open] > summary.finding-evidence-summary::after {
+  transform: rotate(90deg);
+}
+
+summary.finding-evidence-summary:hover {
   color: var(--text-main);
 }
 
+summary.finding-evidence-summary:hover::after {
+  color: var(--text-main);
+}
+
+details.finding-evidence-details .evidence-quote-box,
 .evidence-quote-box {
-  display: none;
   margin-top: 8px;
   padding: 8px 12px;
   background: #f8fafc;
@@ -553,13 +594,12 @@ header.app-header {
   font-style: italic;
   line-height: 1.5;
   word-break: break-word;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
-.evidence-quote-box.open {
-  display: block;
-}
-
-/* Cancellation Guide Card */
+/* Cancellation Guide Card (Native Accessible Elements) */
+details.cancel-guide-card,
 .cancel-guide-card {
   background: #fffdf5;
   border: 1px solid #fde68a;
@@ -568,11 +608,29 @@ header.app-header {
   box-shadow: 0 4px 14px rgba(217, 119, 6, 0.08);
 }
 
+summary.cancel-guide-header,
 .cancel-guide-header {
+  list-style: none;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  cursor: pointer;
+  user-select: none;
+}
+
+summary.cancel-guide-header::-webkit-details-marker {
+  display: none;
+}
+
+summary.cancel-guide-header::after {
+  content: '▾';
+  font-size: 13px;
+  color: #b45309;
+  transition: transform 0.2s ease;
+}
+
+details.cancel-guide-card:not([open]) > summary.cancel-guide-header::after {
+  transform: rotate(-90deg);
 }
 
 .cancel-guide-title-row {
@@ -624,7 +682,7 @@ header.app-header {
   width: 100%;
   padding: 10px 14px;
   background: #f59e0b;
-  color: #ffffff;
+  color: var(--text-main, #0f172a);
   text-decoration: none;
   font-size: 12.5px;
   font-weight: 700;
@@ -635,6 +693,7 @@ header.app-header {
 
 .btn-open-billing:hover {
   background: #d97706;
+  color: var(--text-main, #0f172a);
   transform: translateY(-1px);
 }
 

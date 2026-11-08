@@ -248,12 +248,19 @@ async function loadTabAnalysis() {
     url: activeTabInfo.url,
     domain: activeTabInfo.domain
   }, (res) => {
-    if (chrome.runtime.lastError || !res || !res.success) {
-      // No active analysis or stale result detected
+    if (chrome.runtime.lastError || !res) {
       renderUnanalyzedState(activeTabInfo.domain);
-    } else {
-      renderWebsiteAnalysis(res.data, res.engine, res.domain || activeTabInfo.domain, res.riskLevel);
+      return;
     }
+    if (res.status === 'ERROR' || res.riskLevel === 'ERROR' || res.reason === 'POLICY_FETCH_FAILED') {
+      renderErrorState(res.error || res.reason || 'Failed to fetch or analyze policy.', activeTabInfo.domain);
+      return;
+    }
+    if (!res.success || res.status === 'UNANALYZED' || !res.data) {
+      renderUnanalyzedState(activeTabInfo.domain);
+      return;
+    }
+    renderWebsiteAnalysis(res.data, res.engine, res.domain || activeTabInfo.domain, res.riskLevel, res.policyUrl);
   });
 }
 
@@ -288,9 +295,58 @@ function evaluateRisk(data) {
 }
 
 /**
+ * Helper to dynamically extract analyzed policy items based on policyUrl and page metadata.
+ * Completely eliminates hardcoded checkmarks for clean screen.
+ */
+function getAnalyzedPoliciesList(policyUrl, pageTitle = '', domain = '') {
+  const list = [];
+  const targetUrl = policyUrl || activeTabInfo.url || '';
+
+  if (targetUrl) {
+    let name = 'Terms & Conditions';
+    if (/privacy/i.test(targetUrl) || /privacy/i.test(pageTitle)) {
+      name = 'Privacy Policy';
+    } else if (/terms|tos|conditions/i.test(targetUrl) || /terms|tos|conditions/i.test(pageTitle)) {
+      name = 'Terms of Service';
+    } else if (/eula|license/i.test(targetUrl)) {
+      name = 'Software License (EULA)';
+    } else if (/billing|subscription/i.test(targetUrl)) {
+      name = 'Subscription & Billing Terms';
+    } else if (pageTitle && pageTitle.length > 3 && !/loading|untitled/i.test(pageTitle)) {
+      name = pageTitle.slice(0, 40).trim();
+    } else {
+      name = `${domain || 'Site'} Legal Agreement`;
+    }
+    list.push({ name, url: targetUrl });
+  } else {
+    list.push({ name: `${domain || 'Site'} Terms & Conditions`, url: null });
+  }
+  return list;
+}
+
+/**
+ * Validates billing URL: must be https and cannot be a bare homepage
+ */
+function isValidBillingUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const clean = url.trim();
+  if (!/^https:\/\//i.test(clean)) return false;
+  try {
+    const u = new URL(clean);
+    const cleanPath = u.pathname.replace(/^\/+|\/+$/g, '');
+    if (!cleanPath && !u.search && !u.hash) {
+      return false; // Bare homepage
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Render "This Website" Analysis View (Primary View)
  */
-function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', precomputedRisk = null) {
+function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', precomputedRisk = null, policyUrl = null) {
   const container = document.getElementById('findingsContainer');
   const mascotImg = document.getElementById('heroMascotImg');
   const brandIcon = document.getElementById('brandShieldIcon');
@@ -354,20 +410,22 @@ function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', 
   if (mascotImg) mascotImg.src = mascotFile;
   if (brandIcon) brandIcon.src = mascotFile;
 
-  // Render Findings Cards or Clean State
+  // Render Findings Cards or Clean State (Dynamic Checklist based on policyUrl)
   if (risk.presentCount === 0) {
+    const policies = getAnalyzedPoliciesList(policyUrl, activeTabInfo.title, domain || activeTabInfo.domain);
+    const checklistHtml = policies.map((p) => `
+      <div class="clean-item">
+        <span class="clean-check-badge">✓</span>
+        <span class="clean-item-text">${escapeHtml(p.name)}</span>
+        ${p.url ? `<a class="clean-item-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer" title="View policy">↗</a>` : ''}
+      </div>
+    `).join('');
+
     container.innerHTML = `
       <div class="clean-policies-card">
         <div class="clean-title">Policies checked</div>
         <div class="clean-checklist">
-          <div class="clean-item">
-            <span class="clean-check-badge">✓</span>
-            <span>Terms of Service</span>
-          </div>
-          <div class="clean-item">
-            <span class="clean-check-badge">✓</span>
-            <span>Privacy Policy</span>
-          </div>
+          ${checklistHtml}
         </div>
         <div class="clean-status-box">
           <span>✓</span>
@@ -407,21 +465,20 @@ function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', 
         </div>
 
         ${snippetText ? `
-          <div class="finding-evidence-toggle">
-            <button class="btn-toggle-evidence" data-target="snippet-${catKey}">
+          <details class="finding-evidence-details">
+            <summary class="finding-evidence-summary">
               <span>View original clause</span>
-              <span class="toggle-arrow">▸</span>
-            </button>
-            <div class="evidence-quote-box" id="snippet-${catKey}">
+            </summary>
+            <div class="evidence-quote-box">
               "${escapeHtml(snippetText)}"
             </div>
-          </div>
+          </details>
         ` : ''}
       </div>
     `;
   }).join('');
 
-  // If AUTO_RENEW is present, attach the cancellation guide card
+  // If AUTO_RENEW is present, attach the cancellation guide card with accessible native <details> and <summary>
   if (data.AUTO_RENEW?.present && (data.AUTO_RENEW.cancellationGuide || data.cancellationGuide)) {
     const guide = data.AUTO_RENEW.cancellationGuide || data.cancellationGuide;
     const stepsHtml = (guide.steps || []).map((step, idx) => `
@@ -431,61 +488,32 @@ function renderWebsiteAnalysis(data, engine = 'Analysis Pipeline', domain = '', 
       </div>
     `).join('');
 
+    const rawUrl = typeof guide.url === 'string' ? guide.url.trim() : '';
+    const canOpenBilling = isValidBillingUrl(rawUrl);
+
     cardsHtml += `
-      <div class="cancel-guide-card">
-        <div class="cancel-guide-header" id="btnToggleCancelSteps">
+      <details class="cancel-guide-card" open>
+        <summary class="cancel-guide-header">
           <div class="cancel-guide-title-row">
             <span>💡</span>
             <span>How to Stop Auto-Pay</span>
           </div>
-          <span style="font-size: 13px; color: #b45309;" id="cancelStepsArrow">▾</span>
-        </div>
-        <div class="cancel-steps-list" id="cancelStepsContainer">
+        </summary>
+        <div class="cancel-steps-list">
           ${stepsHtml}
         </div>
-        ${guide.url ? `
-          <a class="btn-open-billing" href="${escapeHtml(guide.url)}" target="_blank" rel="noopener noreferrer">
+        ${canOpenBilling ? `
+          <a class="btn-open-billing" href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener noreferrer">
             <span>Open billing settings</span>
             <span>↗</span>
           </a>
         ` : ''}
         <div class="cancel-guide-note">${escapeHtml(guide.domain || domain)} subscription management</div>
-      </div>
+      </details>
     `;
   }
 
   container.innerHTML = cardsHtml;
-
-  // Attach Evidence Toggle Listeners
-  container.querySelectorAll('.btn-toggle-evidence').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const targetId = btn.getAttribute('data-target');
-      const box = document.getElementById(targetId);
-      const arrow = btn.querySelector('.toggle-arrow');
-      if (box) {
-        const isOpen = box.classList.contains('open');
-        if (isOpen) {
-          box.classList.remove('open');
-          if (arrow) arrow.textContent = '▸';
-        } else {
-          box.classList.add('open');
-          if (arrow) arrow.textContent = '▾';
-        }
-      }
-    });
-  });
-
-  // Attach Cancellation Guide Collapse Listener
-  const cancelToggle = document.getElementById('btnToggleCancelSteps');
-  const cancelSteps = document.getElementById('cancelStepsContainer');
-  const cancelArrow = document.getElementById('cancelStepsArrow');
-  if (cancelToggle && cancelSteps) {
-    cancelToggle.addEventListener('click', () => {
-      const isHidden = cancelSteps.style.display === 'none';
-      cancelSteps.style.display = isHidden ? 'flex' : 'none';
-      if (cancelArrow) cancelArrow.textContent = isHidden ? '▾' : '▸';
-    });
-  }
 }
 
 /**
@@ -507,8 +535,8 @@ function renderUnanalyzedState(domain = '', customReason = '') {
   if (currentView === 'website') {
     document.body.className = 'theme-neutral';
   }
-  if (mascotImg) mascotImg.src = 'icons/guardian-low-risk.png';
-  if (brandIcon) brandIcon.src = 'icons/guardian-low-risk.png';
+  if (mascotImg) mascotImg.src = 'icons/guardian-neutral.png';
+  if (brandIcon) brandIcon.src = 'icons/guardian-neutral.png';
 
   if (pillBadge) pillBadge.textContent = 'Not analyzed';
   if (headline) headline.textContent = 'No policies analyzed yet';
@@ -540,6 +568,58 @@ function renderUnanalyzedState(domain = '', customReason = '') {
 }
 
 /**
+ * Render Error State (P1 & P3)
+ * Displays explicit error notice when policy fetch fails or analysis pipeline errors.
+ * Never defaults to clean.
+ */
+function renderErrorState(errorMsg = '', domain = '') {
+  const container = document.getElementById('findingsContainer');
+  const mascotImg = document.getElementById('heroMascotImg');
+  const brandIcon = document.getElementById('brandShieldIcon');
+  const pillBadge = document.getElementById('heroPillBadge');
+  const headline = document.getElementById('heroHeadline');
+  const subtext = document.getElementById('heroSubtext');
+  const subEl = document.getElementById('currentSiteSub');
+  const engineBadge = document.getElementById('engineBadge');
+  const footerEngine = document.getElementById('engineAttribution');
+
+  activeTabInfo.riskTheme = 'theme-neutral';
+  if (currentView === 'website') {
+    document.body.className = 'theme-neutral';
+  }
+  if (mascotImg) mascotImg.src = 'icons/guardian-neutral.png';
+  if (brandIcon) brandIcon.src = 'icons/guardian-neutral.png';
+
+  if (pillBadge) pillBadge.textContent = 'Analysis error';
+  if (headline) headline.textContent = 'Could not analyze policy';
+  if (subtext) subtext.textContent = errorMsg || 'An error occurred while fetching or analyzing terms.';
+  if (subEl) subEl.textContent = 'Analysis failed';
+  if (engineBadge) engineBadge.style.display = 'none';
+  if (footerEngine) footerEngine.textContent = 'Scan encountered an error.';
+
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="unanalyzed-card" style="border-left: 5px solid #ef4444;">
+      <div class="unanalyzed-icon">⚠️</div>
+      <div class="unanalyzed-title" style="color: #dc2626;">Scan Incomplete</div>
+      <div class="unanalyzed-desc">
+        ${escapeHtml(errorMsg || 'Unable to retrieve or analyze policy content on this page.')}
+      </div>
+      <button class="btn-scan-now" id="btnScanNow">
+        <span>🔄</span>
+        <span>Retry Scan</span>
+      </button>
+    </div>
+  `;
+
+  const btnScan = document.getElementById('btnScanNow');
+  if (btnScan) {
+    btnScan.addEventListener('click', triggerActiveTabScan);
+  }
+}
+
+/**
  * Trigger On-Demand Scan of the Active Tab
  */
 async function triggerActiveTabScan() {
@@ -557,27 +637,42 @@ async function triggerActiveTabScan() {
   }
 
   try {
-    // Execute quick text/links scraper in active tab
+    // Check if the active tab's URL matches a legal/terms page first
+    const isLegalPage = /(?:terms|privacy|(?:^|[^a-z])tos(?:[^a-z]|$)|conditions|legal|eula|policy|policies)/i.test(activeTabInfo.url);
+
+    // Execute quick text/links scraper in active tab:
+    // If on a legal/terms page, use page's own text and set policyUrl to current URL.
+    // Only scrape DOM for external policy links if on an ordinary, non-legal page.
     const [execResult] = await chrome.scripting.executeScript({
       target: { tabId: activeTabInfo.id },
-      func: () => {
+      func: (onLegalPage) => {
         const text = (document.body && (document.body.innerText || document.body.textContent) || '').slice(0, 15000);
-        const termsLink = Array.from(document.querySelectorAll('a')).find(a => /terms|privacy|tos|conditions/i.test(a.textContent || ''));
+        let externalTermsUrl = null;
+        if (!onLegalPage) {
+          const link = Array.from(document.querySelectorAll('a')).find(a =>
+            /(?:terms|privacy|tos|conditions|policy)/i.test(a.textContent || '') ||
+            /(?:terms|privacy|tos|policy)/i.test(a.href || '')
+          );
+          if (link && link.href && /^https?:\/\//i.test(link.href)) {
+            externalTermsUrl = link.href;
+          }
+        }
         return {
           title: document.title,
-          termsUrl: termsLink ? termsLink.href : null,
+          termsUrl: externalTermsUrl,
           text: text
         };
-      }
+      },
+      args: [isLegalPage]
     });
 
     const pageData = execResult?.result || {};
     const text = pageData.text || '';
-    const remoteUrl = pageData.termsUrl || null;
+    const policyUrl = isLegalPage ? activeTabInfo.url : (pageData.termsUrl || null);
 
-    const payload = remoteUrl
-      ? { action: 'FETCH_AND_ANALYZE_TC', url: remoteUrl, text: text, domain: activeTabInfo.domain }
-      : { action: 'ANALYZE_TC', text: text, domain: activeTabInfo.domain };
+    const payload = (!isLegalPage && pageData.termsUrl)
+      ? { action: 'FETCH_AND_ANALYZE_TC', policyUrl: policyUrl, url: policyUrl, text: text, domain: activeTabInfo.domain, tabId: activeTabInfo.id }
+      : { action: 'ANALYZE_TC', policyUrl: policyUrl, text: text, domain: activeTabInfo.domain, url: activeTabInfo.url, tabId: activeTabInfo.id };
 
     chrome.runtime.sendMessage(payload, (analysisRes) => {
       if (chrome.runtime.lastError || !analysisRes) {
@@ -585,16 +680,13 @@ async function triggerActiveTabScan() {
         return;
       }
 
-      // Store in background tab store
-      chrome.runtime.sendMessage({
-        action: 'STORE_TAB_ANALYSIS',
-        tabId: activeTabInfo.id,
-        url: activeTabInfo.url,
-        domain: activeTabInfo.domain,
-        result: analysisRes
-      }, () => {
-        renderWebsiteAnalysis(analysisRes.data, analysisRes.engine, activeTabInfo.domain);
-      });
+      if (analysisRes.status === 'ERROR' || analysisRes.riskLevel === 'ERROR' || !analysisRes.success) {
+        renderErrorState(analysisRes.error || analysisRes.reason || 'Analysis failed.', activeTabInfo.domain);
+        return;
+      }
+
+      // Background finalizeScan has stored the record and updated toolbar icon
+      renderWebsiteAnalysis(analysisRes.data, analysisRes.engine, activeTabInfo.domain, analysisRes.riskLevel, policyUrl);
     });
   } catch (err) {
     console.warn('[T&C Guardian] On-demand scan failed:', err);

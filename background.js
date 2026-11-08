@@ -7,6 +7,35 @@
 import { CONFIG } from './config.js';
 
 // Default empty contract structure
+const REQUIRED_CATEGORIES = [
+  'DATA_SALE',
+  'AI_TRAINING',
+  'AUTO_RENEW',
+  'NO_DELETE',
+  'WAIVE_RIGHTS'
+];
+
+/**
+ * Strict Payload Validation
+ * Explicitly validates that the parsed payload contains all 5 risk categories with explicit boolean present properties.
+ * If empty, malformed, or incomplete, returns false so status is forced to ERROR/INCOMPLETE.
+ * Never defaults to CLEAN.
+ */
+function validateAnalysisData(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+  for (const cat of REQUIRED_CATEGORIES) {
+    if (!data[cat] || typeof data[cat] !== 'object' || Array.isArray(data[cat])) {
+      return false;
+    }
+    if (typeof data[cat].present !== 'boolean') {
+      return false;
+    }
+  }
+  return true;
+}
+
 function createEmptyData() {
   return {
     DATA_SALE: {
@@ -55,25 +84,44 @@ function truncateSnippet(snippet, maxLen = 250) {
 
 /**
  * Formats or generates a concise 1-2 sentence plain-English shortSummary under 150 characters.
+ * Dynamically checks matched evidence for "opt-out" / "opt out" and reflects it in summary.
+ * Removes hardcoded "without opt-out" string.
  */
-function formatShortSummary(summary, categoryKey, isPresent = true) {
+function formatShortSummary(summary, categoryKey, isPresent = true, evidence = '') {
   if (!isPresent) {
     return 'No risk clause detected.';
   }
 
   const defaultShorts = {
     DATA_SALE: 'Sells or shares your personal data with third-party ad brokers.',
-    AI_TRAINING: 'Trains proprietary AI and neural models on your content without opt-out.',
+    AI_TRAINING: 'Trains proprietary AI and neural models on your content.',
     AUTO_RENEW: 'Enforces recurring subscription renewals with strict non-refundable terms.',
     NO_DELETE: 'Retains customer records and activity telemetry indefinitely post-deletion.',
     WAIVE_RIGHTS: 'Forces individual binding arbitration and waives class action rights.'
   };
+
+  const combinedEvidence = `${summary || ''} ${evidence || ''}`;
+
+  if (categoryKey === 'AI_TRAINING') {
+    const hasOptOut = /\bopt[- ]out\b/i.test(combinedEvidence);
+    if (hasOptOut) {
+      return 'Trains proprietary AI models on your content (opt-out available).';
+    }
+  }
 
   if (!summary || typeof summary !== 'string' || summary.trim().length === 0) {
     return defaultShorts[categoryKey] || 'Risk clause detected in terms.';
   }
 
   let clean = summary.replace(/\s+/g, ' ').trim();
+  // Strip hardcoded "without opt-out" if an opt-out was detected
+  if (categoryKey === 'AI_TRAINING' && /\bopt[- ]out\b/i.test(combinedEvidence)) {
+    clean = clean.replace(/without\s+opt[- ]out/gi, 'with opt-out available');
+  } else if (categoryKey === 'AI_TRAINING') {
+    // Also remove hardcoded "without opt-out" string as requested
+    clean = clean.replace(/\s+without\s+opt[- ]out/gi, '');
+  }
+
   if (clean.length <= 145) {
     return clean;
   }
@@ -359,11 +407,11 @@ const EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS = {
  */
 const CATEGORY_SNIPPET_MATCHERS = {
   DATA_SALE: [
-    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|share|disclose|license|monetiz|transfer)\s+[^.!?\n]{0,60}(?:personal\s+(?:information|data)|telemetry|user\s+profile)[^.!?\n]{0,60}(?:third[- ]part|advertis|broker|commercial|marketing|partner)/i,
-    /(?:third[- ]party|data\s+broker|advertis)[^.!?\n]{0,60}(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|share|monetiz|license)[^.!?\n]{0,60}(?:personal\s+(?:information|data)|user\s+data)/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not|right\s+to\s+|request\s+to\s+|portability\s+of\s+)\s+(?:to\s+|ever\s+)?)(?:sell|share|disclose|license|monetiz|transfer)\s+[^.!?\n]{0,60}(?:personal\s+(?:information|data)|telemetry|user\s+profile)[^.!?\n]{0,60}(?:third[- ]part|advertis|broker|commercial|marketing|partner)/i,
+    /(?:third[- ]party|data\s+broker|advertis)[^.!?\n]{0,60}(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not|right\s+to\s+|request\s+to\s+)\s+(?:to\s+|ever\s+)?)(?:sell|share|monetiz|license)[^.!?\n]{0,60}(?:personal\s+(?:information|data)|user\s+data)/i,
     /(?<!\b(?:no\s+|prohibit\s+))sale\s+(?:or\s+sharing\s+)?of\s+personal\s+(?:information|data)/i,
     /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:we\s+|may\s+)?sell\s+(?:or\s+monetize\s+)?(?:your\s+|user\s+)?personal\s+(?:information|data)/i,
-    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)monetiz(?:e|ing)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:monetiz(?:e|ing)|monetisation|monetization)\s+(?:your\s+|user\s+)?(?:personal\s+)?data/i,
     /commercial\s+data\s+broker\s+licensing/i,
     /sell,\s+license,\s+and\s+syndicate\s+personal\s+data/i
   ],
@@ -371,15 +419,18 @@ const CATEGORY_SNIPPET_MATCHERS = {
     /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|large\s+language|llm|algorithm|neural)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|user)/i,
     /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|fine-tun(?:e|ing))\s+(?:our\s+|proprietary\s+)?(?:ai|artificial\s+intelligence|machine\s+learning|neural\s+network|large\s+language)\s+models?\s+(?:on|using|with)\s+(?:your|user)/i,
     /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:use|utilize|license|ingest)\s+[^.!?\n]{0,40}(?:content|data|upload|prompt|submission|post)[^.!?\n]{0,40}(?:train|training|machine\s+learning|ai\s+model)/i,
+    /(?<!\b(?:no\s+|prohibit\s+|without\s+))model\s+training\b/i,
     /ai\s+model\s+training\s+license/i,
     /license\s+to\s+train\s+(?:proprietary\s+)?(?:artificial\s+intelligence|machine\s+learning|ai\s+models)/i,
     /train\s+artificial\s+intelligence\s+(?:models\s+and\s+neural\s+networks\s+on\s+user\s+data|systems)/i
   ],
   AUTO_RENEW: [
     /(?:subscription|plan|service|membership)\s+(?:will\s+)?automatically\s+renew/i,
-    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)automatic(?:ally)?\s+renew(?:s|al)?/i,
+    /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)automatic(?:ally)?\s+(?:renew(?:s|al)?|charge(?:s|d)?)/i,
     /auto-renew(?:s|al)?/i,
     /recurring\s+(?:billing|charge|subscription|fee|payment)/i,
+    /paid\s+subscription\s+renew(?:s|al|als)?/i,
+    /automatic\s+charges?/i,
     /mandatory\s+\$(?:99|\d+)[^.!?\n]*recurring\s+auto-renewal/i,
     /(?:payments?|fees|charges?)\s+(?:are|is)\s+(?:strictly\s+)?non-refundable/i,
     /no\s+refunds\s+or\s+credits\s+for\s+(?:partial|any)/i,
@@ -418,12 +469,25 @@ const CATEGORY_FALLBACK_PHRASES = {
  * Evaluates terms text against established industry risk phrasing.
  */
 const CATEGORY_RISK_PATTERNS = {
-  DATA_SALE: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:sell|share|disclose|license|monetiz)\s+[^.!?\n]{0,50}(?:personal\s+(?:information|data)|user\s+data)[^.!?\n]{0,50}(?:third[- ]part|advertis|broker|marketing)|(?<!\b(?:no\s+|prohibit\s+))sale\s+(?:or\s+sharing\s+)?of\s+personal\s+information|monetiz(?:e|ing)\s+(?:your\s+)?data/i,
-  AI_TRAINING: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|llm|algorithm)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|user)|(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:use|license)\s+[^.!?\n]{0,30}(?:content|data|upload|prompt)\s+[^.!?\n]{0,30}(?:train|training|ai\s+model)|ai\s+model\s+training/i,
-  AUTO_RENEW: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)automatic(?:ally)?\s+renew(?:s|al)?|auto-renew|recurring\s+(?:billing|charge|subscription)|non-refundable\s+(?:subscription|billing|fee)/i,
+  DATA_SALE: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not|right\s+to\s+|request\s+to\s+|portability\s+of\s+)\s+(?:to\s+|ever\s+)?)(?:sell|share|disclose|license|monetiz)\s+[^.!?\n]{0,50}(?:personal\s+(?:information|data)|user\s+data)[^.!?\n]{0,50}(?:third[- ]part|advertis|broker|marketing)|(?<!\b(?:no\s+|prohibit\s+))sale\s+(?:or\s+sharing\s+)?of\s+personal\s+information|monetiz(?:e|ing)\s+(?:your\s+)?data/i,
+  AI_TRAINING: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:train|training|develop|improve)\s+[^.!?\n]{0,40}(?:ai|artificial\s+intelligence|machine\s+learning|llm|algorithm)\s+models?[^.!?\n]{0,40}(?:content|data|upload|prompt|user)|(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't|shall\s+not|not)\s+(?:to\s+|ever\s+)?)(?:use|license)\s+[^.!?\n]{0,30}(?:to\s+train|(?:content|data|upload|prompt)\s+[^.!?\n]{0,30}(?:train|training|ai\s+model))|(?<!\b(?:no\s+|prohibit\s+|without\s+))model\s+training\b|ai\s+model\s+training|license\s+to\s+train\s+[^.!?\n]{0,30}(?:ai|artificial\s+intelligence|machine\s+learning)/i,
+  AUTO_RENEW: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)automatic(?:ally)?\s+(?:renew(?:s|al)?|charge(?:s|d)?)|paid\s+subscription\s+renew(?:s|al|als)?|automatic\s+charges?|auto-renew|recurring\s+(?:billing|charge|subscription)|non-refundable\s+(?:subscription|billing|fee)/i,
   NO_DELETE: /(?<!\b(?:do\s+not|don't|does\s+not|doesn't|will\s+not|won't|never|cannot|can't)\s+(?:to\s+|ever\s+)?)(?:retain|keep|preserve|store)\s+[^.!?\n]{0,40}(?:indefinitely|permanently)|(?:after\s+(?:account\s+)?deletion|even\s+if\s+you\s+delete)[^.!?\n]{0,40}(?:retain|remain|preserve)|indefinite\s+data\s+retention/i,
   WAIVE_RIGHTS: /(?:mandatory|binding)\s+arbitration|arbitration\s+agreement|class\s+action\s+waiver|waive\s+[^.!?\n]{0,30}(?:jury\s+trial|class\s+action)/i
 };
+
+/**
+ * Data Portability Patterns & Exclusion
+ * Protects GDPR/CCPA data portability and export clauses from being misidentified as data sales.
+ */
+const PORTABILITY_PATTERNS = [
+  /\b(?:data\s+)?portability\b/i,
+  /\bright\s+to\s+(?:request\s+)?(?:transfer|port|export|download|receive)\b/i,
+  /\b(?:you\s+may\s+request|user\s+requests?)\s+to\s+transfer\b/i,
+  /\btransfer\s+(?:your\s+own|such)\s+data\b/i,
+  /\btransfer\s+(?:of\s+)?(?:your\s+)?personal\s+data\s+(?:to\s+another\s+(?:controller|service|provider)|upon\s+(?:your\s+)?request)\b/i,
+  /\btransfer\s+personal\s+data\s+to\s+another\b/i
+];
 
 /**
  * Negation Patterns & Exclusion Checker
@@ -434,11 +498,10 @@ const NEGATION_PATTERNS = [
   /\b(?:do\s+not|don't|does\s+not|doesn't|did\s+not|didn't|will\s+not|won't|never|cannot|can't|shall\s+not|neither|nor)\b/i,
   /\b(?:no\s+(?:longer|sale|selling|monetization|licensing|sharing|training|retention|waiver))\b/i,
   /\b(?:prohibit(?:ed|s)?|refrain\s+from|strictly\s+forbidden|not\s+permitted|not\s+authorized)\b/i,
-  /\bnot\s+(?:ever\s+)?(?:sell|sold|share|shared|monetiz\w*|train\w*|use\w*|retain\w*|renew\w*|waiv\w*)\b/i,
-  /\bwithout\s+(?:your\s+)?(?:prior\s+)?(?:express\s+|explicit\s+|written\s+)?consent\b/i
+  /\bnot\s+(?:ever\s+)?(?:sell|sold|share|shared|monetiz\w*|train\w*|use\w*|retain\w*|renew\w*|waiv\w*)\b/i
 ];
 
-function isClauseNegated(text, matchIndex, matchLength = 0) {
+function isClauseNegated(text, matchIndex, matchLength = 0, categoryKey = '') {
   if (!text || typeof text !== 'string') return false;
 
   const textBefore = text.slice(0, matchIndex);
@@ -453,6 +516,15 @@ function isClauseNegated(text, matchIndex, matchLength = 0) {
 
   const clause = text.slice(sentenceStart === 0 ? 0 : sentenceStart + 2, matchIndex + matchLength + 60);
   const preceding = text.slice(sentenceStart === 0 ? 0 : sentenceStart + 2, matchIndex);
+
+  // Check data portability rights exclusion for DATA_SALE (e.g. right to transfer, portability, transfer your own data)
+  if (categoryKey === 'DATA_SALE' || (!categoryKey && /\b(?:data|personal|information|transfer)\b/i.test(clause))) {
+    for (const portRegex of PORTABILITY_PATTERNS) {
+      if (portRegex.test(clause)) {
+        return true; // Exclude data portability rights from being treated as sales
+      }
+    }
+  }
 
   for (const negRegex of NEGATION_PATTERNS) {
     if (negRegex.test(preceding)) {
@@ -491,7 +563,7 @@ function hasCategoryRisk(sourceText, categoryKey, domain = '') {
       let m;
       const r = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
       while ((m = r.exec(sourceText)) !== null) {
-        if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+        if (!isClauseNegated(sourceText, m.index, m[0].length, categoryKey)) {
           return true;
         }
       }
@@ -505,7 +577,7 @@ function hasCategoryRisk(sourceText, categoryKey, domain = '') {
     let m;
     const r = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
     while ((m = r.exec(sourceText)) !== null) {
-      if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+      if (!isClauseNegated(sourceText, m.index, m[0].length, categoryKey)) {
         return true;
       }
     }
@@ -516,7 +588,7 @@ function hasCategoryRisk(sourceText, categoryKey, domain = '') {
     let m;
     const r = new RegExp(generalPattern.source, generalPattern.flags.includes('g') ? generalPattern.flags : generalPattern.flags + 'g');
     while ((m = r.exec(sourceText)) !== null) {
-      if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+      if (!isClauseNegated(sourceText, m.index, m[0].length, categoryKey)) {
         return true;
       }
     }
@@ -539,7 +611,7 @@ function extractCategorySnippet(sourceText, categoryKey) {
       const clean = b.replace(/\s+/g, ' ').trim();
       if (clean.length >= 25 && regex.test(clean)) {
         let m = regex.exec(clean);
-        if (m && isClauseNegated(clean, m.index, m[0].length)) {
+        if (m && isClauseNegated(clean, m.index, m[0].length, categoryKey)) {
           continue; // Skip negated statement
         }
         if (clean.length > 200 && m) {
@@ -557,7 +629,7 @@ function extractCategorySnippet(sourceText, categoryKey) {
     let m;
     const r = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
     while ((m = r.exec(sourceText)) !== null) {
-      if (!isClauseNegated(sourceText, m.index, m[0].length)) {
+      if (!isClauseNegated(sourceText, m.index, m[0].length, categoryKey)) {
         const start = Math.max(0, m.index - 30);
         const end = Math.min(sourceText.length, m.index + m[0].length + 90);
         const sub = sourceText.slice(start, end).replace(/\s+/g, ' ').trim();
@@ -578,7 +650,7 @@ function extractCategorySnippet(sourceText, categoryKey) {
  */
 function generateGuaranteedFallback(engineLabel = 'Fallback Detection', sourceText = '', domain = '') {
   const data = {};
-  const keys = ['DATA_SALE', 'AI_TRAINING', 'AUTO_RENEW', 'NO_DELETE', 'WAIVE_RIGHTS'];
+  const keys = REQUIRED_CATEGORIES;
   const isDoc = isDocumentationOrOpenSource(sourceText, domain);
 
   for (const k of keys) {
@@ -586,7 +658,7 @@ function generateGuaranteedFallback(engineLabel = 'Fallback Detection', sourceTe
     if (isDetected) {
       const rawSnippet = extractCategorySnippet(sourceText, k);
       const snippet = truncateSnippet(rawSnippet, 250);
-      const shortSummary = formatShortSummary('', k, true);
+      const shortSummary = formatShortSummary('', k, true, rawSnippet);
       data[k] = {
         present: true,
         summary: `Fallback detection: ${k.replace('_', ' ').toLowerCase()} clause detected in agreement requiring explicit user choice.`,
@@ -719,12 +791,14 @@ async function queryTosdr(domain, sourceText = '') {
 
     if (mappedAny) {
       const validatedData = validateAndNormalizeData(data, sourceText, domain);
-      return {
-        success: true,
-        engine: 'ToS;DR',
-        data: validatedData,
-        categories: validatedData
-      };
+      if (validatedData) {
+        return {
+          success: true,
+          engine: 'ToS;DR',
+          data: validatedData,
+          categories: validatedData
+        };
+      }
     }
 
     return null;
@@ -783,6 +857,7 @@ ${text.slice(0, 8000)}
     const parsed = JSON.parse(cleaned);
 
     const data = validateAndNormalizeData(parsed, text, domain);
+    if (!data) return null;
     return {
       success: true,
       engine: 'Opera Web AI',
@@ -867,6 +942,9 @@ async function queryOpenAICompatible(text, endpoint, apiKey, model, engineName, 
     const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
     const data = validateAndNormalizeData(parsed, text, domain);
+    if (!data) {
+      throw new Error(`Incomplete or malformed category payload from ${engineName}`);
+    }
 
     return {
       success: true,
@@ -924,6 +1002,9 @@ async function queryGemini(text, apiKey = CONFIG.GEMINI_API_KEY, model = CONFIG.
     const cleaned = candidateText.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
     const data = validateAndNormalizeData(parsed, text, domain);
+    if (!data) {
+      throw new Error('Incomplete or malformed category payload from Gemini Flash');
+    }
 
     return {
       success: true,
@@ -1034,64 +1115,71 @@ async function queryCloudFallback(text, domain = '') {
 }
 
 /**
- * Ensure all 5 categories exist with present: boolean, summary: string, shortSummary: string, and snippet: string.
- * Strictly preserves dynamic presence: categories where present is false are never forced to true.
+ * Ensure all 5 categories exist with explicit boolean present property, summary, shortSummary, and snippet.
+ * Validates strictly: if any category is omitted or malformed, returns null so caller forces ERROR or failover.
+ * Never defaults missing categories to CLEAN.
  * Enforces ZERO-RISK DEFAULT for documentation and open-source sites.
  * Ensures shortSummary is concise (< 150 chars) and raw snippet is truncated to max 250 characters.
  */
 function validateAndNormalizeData(raw, sourceText = '', domain = '') {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+
+  // Strictly verify all 5 risk categories exist in the raw payload
+  const hasAllKeys = REQUIRED_CATEGORIES.every((k) => {
+    return raw[k] && typeof raw[k] === 'object' && !Array.isArray(raw[k]);
+  });
+  if (!hasAllKeys) {
+    return null;
+  }
+
   const base = createEmptyData();
-  const keys = ['DATA_SALE', 'AI_TRAINING', 'AUTO_RENEW', 'NO_DELETE', 'WAIVE_RIGHTS'];
+  const keys = REQUIRED_CATEGORIES;
   const isDoc = isDocumentationOrOpenSource(sourceText, domain);
 
   for (const k of keys) {
-    if (raw && raw[k]) {
-      let isPresent = Boolean(raw[k].present);
+    let isPresent = false;
+    if (typeof raw[k].present === 'boolean') {
+      isPresent = raw[k].present;
+    } else if (typeof raw[k].present === 'string') {
+      isPresent = /^(true|yes)$/i.test(raw[k].present.trim());
+    } else {
+      return null; // Invalid or missing presence flag
+    }
 
-      // ZERO-RISK DEFAULT FOR DOCUMENTATION:
-      // If terms text is open-source/educational, force present: false unless explicit monetization/arbitration
-      if (isPresent && isDoc) {
-        const explicitPatterns = EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS[k];
-        if (!explicitPatterns || !explicitPatterns.some((p) => p.test(sourceText))) {
-          isPresent = false;
-        }
+    // ZERO-RISK DEFAULT FOR DOCUMENTATION:
+    // If terms text is open-source/educational, force present: false unless explicit monetization/arbitration
+    if (isPresent && isDoc) {
+      const explicitPatterns = EXPLICIT_MONETIZATION_ARBITRATION_PATTERNS[k];
+      if (!explicitPatterns || !explicitPatterns.some((p) => p.test(sourceText))) {
+        isPresent = false;
       }
+    }
 
-      if (isPresent) {
-        let rawSnippet = String(raw[k].snippet || '').trim();
-        if (!rawSnippet && sourceText) {
-          rawSnippet = extractCategorySnippet(sourceText, k);
-        }
-        const finalSnippet = truncateSnippet(rawSnippet || extractCategorySnippet(sourceText, k) || 'Clause detected in agreement', 250);
-        const rawSummary = String(raw[k].summary || raw[k].shortSummary || 'Risk clause detected in terms.');
-        const shortSummary = formatShortSummary(raw[k].shortSummary || rawSummary, k, true);
+    if (isPresent) {
+      let rawSnippet = String(raw[k].snippet || '').trim();
+      if (!rawSnippet && sourceText) {
+        rawSnippet = extractCategorySnippet(sourceText, k);
+      }
+      const finalSnippet = truncateSnippet(rawSnippet || extractCategorySnippet(sourceText, k) || 'Clause detected in agreement', 250);
+      const rawSummary = String(raw[k].summary || raw[k].shortSummary || 'Risk clause detected in terms.');
+      const shortSummary = formatShortSummary(raw[k].shortSummary || rawSummary, k, true, rawSnippet);
 
-        base[k] = {
-          present: true,
-          summary: rawSummary,
-          shortSummary: shortSummary,
-          snippet: finalSnippet
-        };
-        if (k === 'AUTO_RENEW') {
-          base[k].cancellationGuide = raw[k]?.cancellationGuide || getCancellationGuide(domain);
-        }
-      } else {
-        const docNote = isDoc ? ' (Open-source / educational site)' : '';
-        base[k] = {
-          present: false,
-          summary: String(raw[k].summary || `No risk clause detected in agreement terms.${docNote}`),
-          shortSummary: 'No risk clause detected.',
-          snippet: ''
-        };
-        if (k === 'AUTO_RENEW') {
-          base[k].cancellationGuide = null;
-        }
+      base[k] = {
+        present: true,
+        summary: rawSummary,
+        shortSummary: shortSummary,
+        snippet: finalSnippet
+      };
+      if (k === 'AUTO_RENEW') {
+        base[k].cancellationGuide = raw[k]?.cancellationGuide || getCancellationGuide(domain);
       }
     } else {
-      // Key omitted by LLM -> Clean / not present
+      const docNote = isDoc ? ' (Open-source / educational site)' : '';
       base[k] = {
         present: false,
-        summary: 'No risk clause detected in agreement terms.',
+        summary: String(raw[k].summary || `No risk clause detected in agreement terms.${docNote}`),
         shortSummary: 'No risk clause detected.',
         snippet: ''
       };
@@ -1152,9 +1240,77 @@ async function executeAnalysisPipeline(text, domain) {
 
 /**
  * Tab Analysis Store & Page-Identity Lifecycle Management
- * Stores active analysis per tab, rejects stale navigations, and updates dynamic toolbar icon.
+ * Backed by chrome.storage.session to survive Service Worker termination (P4).
+ * Rejects stale navigations and late asynchronous responses via scanId (P5).
+ * Updates dynamic toolbar icon with size dictionary and neutral assets (P2).
  */
-const tabAnalysisStore = new Map();
+const memoryTabStore = new Map();
+const memoryScanStore = new Map();
+
+const tabAnalysisStore = {
+  async get(tabId) {
+    if (!tabId) return null;
+    const key = `tab_analysis_${tabId}`;
+    if (typeof chrome !== 'undefined' && chrome.storage?.session) {
+      try {
+        const res = await chrome.storage.session.get(key);
+        if (res && res[key]) return res[key];
+      } catch (e) {
+        console.warn('[T&C Guardian] chrome.storage.session.get error:', e);
+      }
+    }
+    return memoryTabStore.get(tabId) || null;
+  },
+  async set(tabId, record) {
+    if (!tabId) return;
+    memoryTabStore.set(tabId, record);
+    const key = `tab_analysis_${tabId}`;
+    if (typeof chrome !== 'undefined' && chrome.storage?.session) {
+      try {
+        await chrome.storage.session.set({ [key]: record });
+      } catch (e) {
+        console.warn('[T&C Guardian] chrome.storage.session.set error:', e);
+      }
+    }
+  },
+  async delete(tabId) {
+    if (!tabId) return;
+    memoryTabStore.delete(tabId);
+    memoryScanStore.delete(tabId);
+    const key = `tab_analysis_${tabId}`;
+    const scanKey = `active_scan_${tabId}`;
+    if (typeof chrome !== 'undefined' && chrome.storage?.session) {
+      try {
+        await chrome.storage.session.remove([key, scanKey]);
+      } catch (e) {
+        console.warn('[T&C Guardian] chrome.storage.session.remove error:', e);
+      }
+    }
+  }
+};
+
+async function getActiveScanId(tabId) {
+  if (!tabId) return null;
+  const key = `active_scan_${tabId}`;
+  if (typeof chrome !== 'undefined' && chrome.storage?.session) {
+    try {
+      const res = await chrome.storage.session.get(key);
+      if (res && res[key]) return res[key];
+    } catch {}
+  }
+  return memoryScanStore.get(tabId) || null;
+}
+
+async function setActiveScanId(tabId, scanId) {
+  if (!tabId) return;
+  memoryScanStore.set(tabId, scanId);
+  const key = `active_scan_${tabId}`;
+  if (typeof chrome !== 'undefined' && chrome.storage?.session) {
+    try {
+      await chrome.storage.session.set({ [key]: scanId });
+    } catch {}
+  }
+}
 
 function computeOverallRisk(data) {
   if (!data) return { level: 'CLEAN', count: 0 };
@@ -1181,30 +1337,47 @@ function computeOverallRisk(data) {
 
 function updateToolbarIcon(tabId, riskLevel, riskCount = 0) {
   if (typeof chrome === 'undefined' || !chrome.action) return;
-  let iconPath = 'icons/guardian-low-risk.png';
-  let badgeColor = '#16a34a'; // Green for low/safe
+  let iconPath = 'icons/guardian-neutral.png';
+  let badgeColor = '#64748b';
+  let badgeText = '';
 
   if (riskLevel === 'HIGH') {
     iconPath = 'icons/guardian-high-risk.png';
     badgeColor = '#dc2626'; // Red for high
+    badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
   } else if (riskLevel === 'MEDIUM') {
     iconPath = 'icons/guardian-medium-risk.png';
     badgeColor = '#d97706'; // Amber for medium
-  } else if (riskLevel === 'LOW' || riskLevel === 'CLEAN') {
+    badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
+  } else if (riskLevel === 'LOW') {
     iconPath = 'icons/guardian-low-risk.png';
-    badgeColor = '#16a34a'; // Green for low/safe
+    badgeColor = '#16a34a'; // Green for low
+    badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
+  } else if (riskLevel === 'CLEAN') {
+    iconPath = 'icons/guardian-low-risk.png';
+    badgeColor = '#16a34a'; // Green for clean
+    badgeText = '';
+  } else if (riskLevel === 'ERROR') {
+    iconPath = 'icons/guardian-neutral.png';
+    badgeColor = '#dc2626';
+    badgeText = '!';
+  } else {
+    // UNANALYZED, DEFAULT, etc.
+    iconPath = 'icons/guardian-neutral.png';
+    badgeColor = '#64748b';
+    badgeText = '';
   }
 
-  // Set toolbar icon image
+  // Set toolbar icon image with full size dictionary (P2)
   if (chrome.action.setIcon) {
     try {
       chrome.action.setIcon({
         tabId: tabId,
         path: {
-          16: iconPath,
-          32: iconPath,
-          48: iconPath,
-          128: iconPath
+          "16": iconPath,
+          "32": iconPath,
+          "48": iconPath,
+          "128": iconPath
         }
       }, () => {
         if (chrome.runtime.lastError) {
@@ -1218,7 +1391,6 @@ function updateToolbarIcon(tabId, riskLevel, riskCount = 0) {
 
   // Set numeric badge & background color
   try {
-    const badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
     if (chrome.action.setBadgeText) {
       chrome.action.setBadgeText({
         tabId: tabId,
@@ -1254,11 +1426,11 @@ function urlsMatchPageIdentity(urlA, urlB) {
 
 // Clear stale tab analysis on navigation
 if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (changeInfo.url) {
-      const record = tabAnalysisStore.get(tabId);
+      const record = await tabAnalysisStore.get(tabId);
       if (record && !urlsMatchPageIdentity(changeInfo.url, record.url)) {
-        tabAnalysisStore.delete(tabId);
+        await tabAnalysisStore.delete(tabId);
         updateToolbarIcon(tabId, 'DEFAULT', 0);
       }
     }
@@ -1266,9 +1438,115 @@ if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
 }
 
 if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onRemoved) {
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    tabAnalysisStore.delete(tabId);
+  chrome.tabs.onRemoved.addListener(async (tabId) => {
+    await tabAnalysisStore.delete(tabId);
   });
+}
+
+/**
+ * Centralized State Control & Scan Finalization
+ * Verifies scanId against active scan in session storage to eliminate race conditions.
+ * Validates payload, stores record, updates toolbar icon/badge, and broadcasts finalized state to content script.
+ */
+async function finalizeScan(tabId, scanId, result, context = {}) {
+  const url = context.url || '';
+  const domain = context.domain || (url ? new URL(url).hostname.replace(/^www\./, '') : '');
+  const policyUrl = context.policyUrl || null;
+
+  // 1. Verify scanId matches active scan in session storage (late response override protection)
+  if (tabId && scanId) {
+    const activeScan = await getActiveScanId(tabId);
+    if (activeScan && activeScan !== scanId) {
+      console.warn(`[T&C Guardian] Discarding stale scan result: active=${activeScan}, incoming=${scanId}`);
+      return { success: false, reason: 'STALE_SCAN_DISCARDED', status: 'STALE' };
+    }
+  }
+
+  // 2. Strict Result Validation: validate all 5 categories have explicit boolean present
+  let status = result?.status || (result?.success ? 'SUCCESS' : 'ERROR');
+  let data = result?.data || null;
+  let engine = result?.engine || context.engine || 'Analysis Pipeline';
+  let error = result?.error || null;
+  let reason = result?.reason || null;
+
+  if (status === 'SUCCESS' && data) {
+    const isValid = validateAnalysisData(data);
+    if (!isValid) {
+      console.warn('[T&C Guardian] Payload failed strict validation; forcing status to ERROR/INCOMPLETE');
+      status = 'ERROR';
+      reason = 'INCOMPLETE_DATA';
+      error = 'Analysis data was missing required categories or had malformed presence flags.';
+      data = null;
+    }
+  }
+
+  // 3. Compute overall risk & severity
+  let riskLevel = 'UNANALYZED';
+  let riskCount = 0;
+
+  if (status === 'SUCCESS' && data) {
+    const riskInfo = computeOverallRisk(data);
+    riskLevel = riskInfo.level;
+    riskCount = riskInfo.count;
+  } else if (status === 'ERROR') {
+    riskLevel = 'ERROR';
+    riskCount = 0;
+  } else if (status === 'UNANALYZED') {
+    riskLevel = 'UNANALYZED';
+    riskCount = 0;
+  }
+
+  // 4. Construct complete record
+  const record = {
+    tabId,
+    scanId,
+    url,
+    domain,
+    policyUrl,
+    engine,
+    status,
+    reason,
+    error,
+    data,
+    riskLevel,
+    riskCount,
+    timestamp: Date.now()
+  };
+
+  // 5. Write to storage cache
+  if (tabId) {
+    await tabAnalysisStore.set(tabId, record);
+    // 6. Update toolbar icon and badge
+    updateToolbarIcon(tabId, riskLevel, riskCount);
+
+    // 7. Broadcast finalized, validated state to content script in active tab
+    try {
+      chrome.tabs.sendMessage(tabId, {
+        action: 'TAB_ANALYSIS_FINALIZED',
+        tabId,
+        scanId,
+        record,
+        result: {
+          success: status === 'SUCCESS',
+          status,
+          engine,
+          data,
+          categories: data,
+          riskLevel,
+          riskCount,
+          policyUrl
+        }
+      }, () => {
+        if (chrome.runtime.lastError) {
+          // Tab may not have content script injected (e.g. internal browser page)
+        }
+      });
+    } catch (broadcastErr) {
+      // Ignore broadcast errors
+    }
+  }
+
+  return record;
 }
 
 /**
@@ -1279,8 +1557,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request?.action === 'ANALYZE_TC' || request?.action === 'FETCH_AND_ANALYZE_TC') {
     let text = request.text || '';
     let domain = request.domain || '';
+    const policyUrl = request.policyUrl || (request.action === 'FETCH_AND_ANALYZE_TC' ? request.url : null);
+    const tabId = sender?.tab?.id || request.tabId;
+    const scanId = request.scanId || `scan_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const tabUrl = sender?.tab?.url || request.url || '';
 
     (async () => {
+      if (tabId) {
+        await setActiveScanId(tabId, scanId);
+      }
+
       let responded = false;
       const sendOnce = (payload) => {
         if (!responded) {
@@ -1294,102 +1580,143 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       };
 
       // 10-second overall timeout: never fail silently
-      const timeoutTimer = setTimeout(() => {
+      const timeoutTimer = setTimeout(async () => {
         console.warn('[T&C Guardian] 10s timeout reached. Returning guaranteed fallback.');
-        const fallbackRes = generateGuaranteedFallback('Timeout Fallback', text, domain);
-        if (sender?.tab?.id && fallbackRes?.data) {
-          const tabId = sender.tab.id;
-          const tabUrl = sender.tab.url || request.url || '';
-          const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
-          const riskInfo = computeOverallRisk(fallbackRes.data);
-          tabAnalysisStore.set(tabId, {
-            tabId,
-            url: tabUrl,
-            domain: tabDomain,
-            engine: fallbackRes.engine || 'Timeout Fallback',
-            data: fallbackRes.data,
-            riskLevel: riskInfo.level,
-            riskCount: riskInfo.count,
-            timestamp: Date.now()
-          });
-          updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
+        if (!text || text.trim().length === 0) {
+          const failRecord = await finalizeScan(tabId, scanId, {
+            success: false,
+            status: 'UNANALYZED',
+            reason: 'TIMEOUT_NO_TEXT',
+            error: 'Analysis timed out and no text was available.',
+            data: null
+          }, { url: tabUrl, domain, policyUrl, engine: 'Timeout' });
+          sendOnce(failRecord);
+          return;
         }
-        sendOnce(fallbackRes);
+
+        const fallbackRes = generateGuaranteedFallback('Timeout Fallback', text, domain);
+        const record = await finalizeScan(tabId, scanId, fallbackRes, {
+          url: tabUrl,
+          domain,
+          policyUrl,
+          engine: fallbackRes.engine || 'Timeout Fallback'
+        });
+        sendOnce(record.status === 'SUCCESS' ? fallbackRes : record);
       }, 10000);
 
       try {
-        // If action is FETCH_AND_ANALYZE_TC and text is not provided, fetch from url
-        if (request.action === 'FETCH_AND_ANALYZE_TC' && !text && request.url) {
+        // Linked Policy Priority (P3):
+        // If policyUrl is provided AND (action is FETCH_AND_ANALYZE_TC OR no text OR policyUrl is distinct from current tab page)
+        const shouldFetchPolicy = policyUrl && (
+          request.action === 'FETCH_AND_ANALYZE_TC' ||
+          !text ||
+          text.trim().length === 0 ||
+          (tabUrl && !urlsMatchPageIdentity(policyUrl, tabUrl))
+        );
+
+        if (shouldFetchPolicy) {
           try {
-            const fetchRes = await fetch(request.url);
-            if (fetchRes.ok) {
-              const html = await fetchRes.text();
-              text = html
-                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-              if (!domain) {
-                domain = new URL(request.url).hostname.replace(/^www\./, '');
-              }
+            const fetchRes = await fetch(policyUrl);
+            if (!fetchRes.ok) {
+              throw new Error(`HTTP ${fetchRes.status}: ${fetchRes.statusText}`);
+            }
+            const html = await fetchRes.text();
+            const extractedText = html
+              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+
+            if (!extractedText || extractedText.length < 50) {
+              throw new Error('Policy URL returned insufficient or empty text.');
+            }
+            text = extractedText;
+            if (!domain) {
+              try {
+                domain = new URL(policyUrl).hostname.replace(/^www\./, '');
+              } catch {}
             }
           } catch (fetchErr) {
-            console.warn('[T&C Guardian] Failed to fetch URL in service worker:', fetchErr);
+            clearTimeout(timeoutTimer);
+            console.warn('[T&C Guardian] Failed to fetch linked policy URL:', fetchErr);
+            const errRecord = await finalizeScan(tabId, scanId, {
+              success: false,
+              status: 'ERROR',
+              reason: 'POLICY_FETCH_FAILED',
+              error: `Failed to fetch linked policy from ${policyUrl}: ${fetchErr.message || 'Network error'}`,
+              data: null
+            }, { url: tabUrl, domain, policyUrl, engine: 'Fetch Error' });
+            sendOnce(errRecord);
+            return;
           }
         }
 
-        if (!domain && request.url) {
+        if (!domain && tabUrl) {
           try {
-            domain = new URL(request.url).hostname.replace(/^www\./, '');
+            domain = new URL(tabUrl).hostname.replace(/^www\./, '');
           } catch {}
+        }
+
+        // If after checking policyUrl and request text, we still have no text:
+        if (!text || text.trim().length === 0) {
+          clearTimeout(timeoutTimer);
+          const unanalyzedRecord = await finalizeScan(tabId, scanId, {
+            success: false,
+            status: 'UNANALYZED',
+            reason: 'MISSING_SOURCE_TEXT',
+            error: 'No text provided for analysis.',
+            data: null
+          }, { url: tabUrl, domain, policyUrl, engine: 'None' });
+          sendOnce(unanalyzedRecord);
+          return;
         }
 
         const result = await executeAnalysisPipeline(text, domain);
         clearTimeout(timeoutTimer);
 
-        // Store analysis per tab and update dynamic toolbar icon
-        if (sender?.tab?.id && result?.data) {
-          const tabId = sender.tab.id;
-          const tabUrl = sender.tab.url || request.url || '';
-          const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
-          const riskInfo = computeOverallRisk(result.data);
-          tabAnalysisStore.set(tabId, {
-            tabId,
-            url: tabUrl,
-            domain: tabDomain,
-            engine: result.engine || 'Analysis Pipeline',
-            data: result.data,
-            riskLevel: riskInfo.level,
-            riskCount: riskInfo.count,
-            timestamp: Date.now()
-          });
-          updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
+        const finalized = await finalizeScan(tabId, scanId, result, {
+          url: tabUrl,
+          domain,
+          policyUrl,
+          engine: result?.engine || 'Analysis Pipeline'
+        });
+
+        if (finalized.reason === 'STALE_SCAN_DISCARDED') {
+          return;
         }
 
-        sendOnce(result);
+        if (finalized.status === 'SUCCESS' && finalized.data) {
+          sendOnce({
+            success: true,
+            status: 'SUCCESS',
+            engine: finalized.engine,
+            data: finalized.data,
+            categories: finalized.data,
+            riskLevel: finalized.riskLevel,
+            riskCount: finalized.riskCount,
+            policyUrl: finalized.policyUrl
+          });
+        } else {
+          sendOnce({
+            success: false,
+            status: finalized.status,
+            reason: finalized.reason || 'ANALYSIS_FAILED',
+            error: finalized.error || 'Analysis produced no valid data.',
+            data: null
+          });
+        }
       } catch (err) {
         clearTimeout(timeoutTimer);
         console.error('[T&C Guardian] Analysis pipeline error:', err);
-        const errFallback = generateGuaranteedFallback('Error Fallback', text, domain);
-        if (sender?.tab?.id && errFallback?.data) {
-          const tabId = sender.tab.id;
-          const tabUrl = sender.tab.url || request.url || '';
-          const tabDomain = domain || (tabUrl ? new URL(tabUrl).hostname.replace(/^www\./, '') : '');
-          const riskInfo = computeOverallRisk(errFallback.data);
-          tabAnalysisStore.set(tabId, {
-            tabId,
-            url: tabUrl,
-            domain: tabDomain,
-            engine: errFallback.engine || 'Error Fallback',
-            data: errFallback.data,
-            riskLevel: riskInfo.level,
-            riskCount: riskInfo.count,
-            timestamp: Date.now()
-          });
-          updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
-        }
-        sendOnce(errFallback);
+        const errRecord = await finalizeScan(tabId, scanId, {
+          success: false,
+          status: 'ERROR',
+          reason: 'PIPELINE_ERROR',
+          error: err.message || 'Analysis pipeline threw an unexpected error.',
+          data: null
+        }, { url: tabUrl, domain, policyUrl, engine: 'Pipeline Error' });
+        sendOnce(errRecord);
       }
     })();
 
@@ -1403,61 +1730,101 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const reqUrl = request.url || '';
     const reqDomain = request.domain || '';
 
-    const record = tabAnalysisStore.get(tabId);
-    if (!record) {
-      sendResponse({ success: false, reason: 'NOT_ANALYZED' });
-      return false;
-    }
+    (async () => {
+      const record = await tabAnalysisStore.get(tabId);
+      if (!record) {
+        sendResponse({ success: false, reason: 'NOT_ANALYZED', status: 'UNANALYZED' });
+        return;
+      }
 
-    // Page identity check: if navigation to a different page occurred, reject stale result
-    if (reqUrl && record.url && !urlsMatchPageIdentity(reqUrl, record.url)) {
-      tabAnalysisStore.delete(tabId);
-      updateToolbarIcon(tabId, 'DEFAULT', 0);
-      sendResponse({ success: false, reason: 'STALE_NAV' });
-      return false;
-    }
+      if (record.status === 'ERROR' || record.riskLevel === 'ERROR') {
+        sendResponse({
+          success: false,
+          status: 'ERROR',
+          reason: record.reason || 'ANALYSIS_ERROR',
+          error: record.error || 'Failed to analyze policy',
+          tabId: record.tabId,
+          url: record.url,
+          domain: record.domain || reqDomain,
+          policyUrl: record.policyUrl || null
+        });
+        return;
+      }
 
-    sendResponse({
-      success: true,
-      tabId: record.tabId,
-      url: record.url,
-      domain: record.domain || reqDomain,
-      engine: record.engine || 'Unknown',
-      data: record.data,
-      riskLevel: record.riskLevel,
-      riskCount: record.riskCount || 0,
-      timestamp: record.timestamp
-    });
-    return false;
+      if (record.status === 'UNANALYZED' || record.riskLevel === 'UNANALYZED' || !record.data) {
+        sendResponse({
+          success: false,
+          status: 'UNANALYZED',
+          reason: record.reason || 'NOT_ANALYZED',
+          tabId: record.tabId,
+          url: record.url,
+          domain: record.domain || reqDomain,
+          policyUrl: record.policyUrl || null
+        });
+        return;
+      }
+
+      // Page identity check: if navigation to a different page occurred, reject stale result
+      if (reqUrl && record.url && !urlsMatchPageIdentity(reqUrl, record.url)) {
+        await tabAnalysisStore.delete(tabId);
+        updateToolbarIcon(tabId, 'DEFAULT', 0);
+        sendResponse({ success: false, reason: 'STALE_NAV', status: 'UNANALYZED' });
+        return;
+      }
+
+      sendResponse({
+        success: true,
+        status: 'SUCCESS',
+        tabId: record.tabId,
+        url: record.url,
+        domain: record.domain || reqDomain,
+        policyUrl: record.policyUrl || null,
+        engine: record.engine || 'Unknown',
+        data: record.data,
+        riskLevel: record.riskLevel,
+        riskCount: record.riskCount || 0,
+        timestamp: record.timestamp
+      });
+    })();
+    return true;
   }
 
-  // Store/update tab analysis directly from an on-demand popup scan or content script fallback
+  // Store/update tab analysis directly from an on-demand popup scan or manual override
   if (request?.action === 'STORE_TAB_ANALYSIS' || request?.type === 'STORE_TAB_ANALYSIS') {
     const tabId = sender?.tab?.id || request.tabId;
     const url = request.url || sender?.tab?.url || '';
     const domain = request.domain || (url ? new URL(url).hostname.replace(/^www\./, '') : '');
     const currentEngine = request.engine || request.result?.engine || 'Fallback Detection';
     const rawData = request.data || request.result?.data || request.result;
+    const policyUrl = request.policyUrl || null;
+    const scanId = request.scanId || `manual_${Date.now()}`;
 
-    if (tabId && rawData) {
-      const normalizedData = rawData.categories || (rawData.DATA_SALE ? rawData : (rawData.data || rawData));
-      const riskInfo = computeOverallRisk(normalizedData);
-      tabAnalysisStore.set(tabId, {
-        tabId,
-        url,
-        domain,
-        engine: currentEngine,
-        data: normalizedData,
-        riskLevel: riskInfo.level,
-        riskCount: riskInfo.count,
-        timestamp: Date.now()
-      });
-      updateToolbarIcon(tabId, riskInfo.level, riskInfo.count);
-      sendResponse({ success: true, riskLevel: riskInfo.level, riskCount: riskInfo.count });
-    } else {
-      sendResponse({ success: false, reason: 'MISSING_TAB_OR_DATA' });
-    }
-    return false;
+    (async () => {
+      if (tabId && rawData) {
+        const normalizedData = rawData.categories || (rawData.DATA_SALE ? rawData : (rawData.data || rawData));
+        const resObj = {
+          success: true,
+          status: 'SUCCESS',
+          engine: currentEngine,
+          data: normalizedData
+        };
+        const record = await finalizeScan(tabId, scanId, resObj, { url, domain, policyUrl, engine: currentEngine });
+        try {
+          sendResponse({ success: record.status === 'SUCCESS', riskLevel: record.riskLevel, riskCount: record.riskCount });
+        } catch {}
+      } else {
+        const record = await finalizeScan(tabId, scanId, {
+          success: false,
+          status: 'UNANALYZED',
+          reason: 'MISSING_TAB_OR_DATA',
+          data: null
+        }, { url, domain, policyUrl, engine: currentEngine });
+        try {
+          sendResponse({ success: false, reason: 'MISSING_TAB_OR_DATA', status: 'UNANALYZED' });
+        } catch {}
+      }
+    })();
+    return true;
   }
 
   // Explicit Choice Model: Save explicit user preference without automated assumptions

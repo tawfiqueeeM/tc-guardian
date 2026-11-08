@@ -809,19 +809,6 @@
       }
     };
 
-    // Data Pipeline Fix: Immediately sync tab analysis state with background.js
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-      try {
-        chrome.runtime.sendMessage({
-          type: 'STORE_TAB_ANALYSIS',
-          action: 'STORE_TAB_ANALYSIS',
-          url: window.location.href,
-          data: finalData,
-          engine: currentEngine
-        });
-      } catch (e) {}
-    }
-
     return {
       success: true,
       engine: currentEngine,
@@ -2115,23 +2102,6 @@
     // Run analysis via message passing or standalone fallback (updates background toolbar badge silently!)
     analysisData = await requestAnalysis(filtered, currentDomain, remoteUrl);
 
-    // Data Pipeline Fix: Immediately sync tab analysis state with background.js
-    if (analysisData) {
-      const finalData = analysisData.categories || analysisData.data || analysisData;
-      const currentEngine = analysisData.engine || 'Fallback Detection';
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        try {
-          chrome.runtime.sendMessage({
-            type: 'STORE_TAB_ANALYSIS',
-            action: 'STORE_TAB_ANALYSIS',
-            url: window.location.href,
-            data: finalData,
-            engine: currentEngine
-          });
-        } catch (e) {}
-      }
-    }
-
     // Fetch stored user profile and overrides
     const { profile, overrides } = await getStorageData();
 
@@ -2146,6 +2116,36 @@
     }
 
     renderUI(analysisData, profile, overrides);
+  }
+
+  // Read-only State Rendering: Listen for background worker's broadcast of validated analysis
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.action === 'TAB_ANALYSIS_FINALIZED' && message.result) {
+        handleFinalizedAnalysis(message.result);
+      }
+    });
+  }
+
+  async function handleFinalizedAnalysis(finalizedResult) {
+    if (!finalizedResult || !finalizedResult.success || !finalizedResult.data) {
+      return;
+    }
+    const normalized = normalizeAnalysisResult(finalizedResult);
+    analysisData = normalized;
+
+    // Check if the current page is a Signup, Checkout, or Legal page
+    if (!isSignupCheckoutOrLegalPage()) {
+      return;
+    }
+
+    const hasFlags = CATEGORIES.some((c) => normalized.categories?.[c]?.present === true);
+    if (!hasFlags) {
+      return;
+    }
+
+    const { profile, overrides } = await getStorageData();
+    renderUI(normalized, profile, overrides);
   }
 
   // Run when document is ready
