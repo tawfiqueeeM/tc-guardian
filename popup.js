@@ -926,6 +926,8 @@ async function init() {
     });
   }
 
+  initVoiceSettings();
+
   // Reset All Saved Answers button (Domain overrides only)
   const btnResetSavedAnswers = document.getElementById('btnResetSavedAnswers');
   if (btnResetSavedAnswers) {
@@ -988,6 +990,78 @@ async function init() {
       }
     });
   }
+}
+
+/**
+ * Voice assistant settings. Stored under the same key content.js reads, so
+ * changes apply on the page immediately.
+ */
+function initVoiceSettings() {
+  const KEY = 'tc_guardian_voice';
+  const el = (id) => document.getElementById(id);
+  const enabledBox = el('toggleVoiceEnabled');
+  if (!enabledBox) return;
+  const autoBox = el('toggleVoiceAutoRead');
+  const engineSel = el('selectVoiceEngine');
+  const nameSel = el('selectVoiceName');
+  const rateRange = el('rangeVoiceRate');
+  const rateLabel = el('voiceRateLabel');
+  const hasStorage = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
+
+  let settings = { enabled: true, autoRead: false, engine: 'auto', rate: 1, voiceName: '' };
+
+  function fillVoices() {
+    if (!window.speechSynthesis) return;
+    const voices = (speechSynthesis.getVoices() || []).filter((v) => /^en/i.test(v.lang));
+    nameSel.innerHTML = '<option value="">Best available</option>';
+    voices.forEach((v) => {
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = v.name;
+      nameSel.appendChild(o);
+    });
+    nameSel.value = settings.voiceName;
+  }
+
+  function apply() {
+    enabledBox.checked = settings.enabled;
+    autoBox.checked = settings.autoRead;
+    engineSel.value = settings.engine;
+    rateRange.value = String(settings.rate);
+    rateLabel.textContent = Number(settings.rate).toFixed(2) + 'x';
+    [autoBox, engineSel, nameSel, rateRange].forEach((c) => { c.disabled = !settings.enabled; });
+    fillVoices();
+  }
+
+  function save() {
+    if (hasStorage) chrome.storage.local.set({ [KEY]: settings });
+  }
+
+  function load(res) {
+    const v = (res && res[KEY]) || {};
+    const r = Number(v.rate);
+    settings = {
+      enabled: v.enabled !== false,
+      autoRead: Boolean(v.autoRead),
+      engine: v.engine === 'browser' ? 'browser' : 'auto',
+      rate: r >= 0.7 && r <= 1.5 ? r : 1,
+      voiceName: typeof v.voiceName === 'string' ? v.voiceName : ''
+    };
+    apply();
+  }
+
+  if (hasStorage) chrome.storage.local.get([KEY], load); else apply();
+  if (window.speechSynthesis) speechSynthesis.addEventListener('voiceschanged', fillVoices);
+
+  enabledBox.addEventListener('change', (e) => { settings.enabled = e.target.checked; apply(); save(); });
+  autoBox.addEventListener('change', (e) => { settings.autoRead = e.target.checked; save(); });
+  engineSel.addEventListener('change', (e) => { settings.engine = e.target.value; save(); });
+  nameSel.addEventListener('change', (e) => { settings.voiceName = e.target.value; save(); });
+  rateRange.addEventListener('input', (e) => {
+    settings.rate = Number(e.target.value) || 1;
+    rateLabel.textContent = settings.rate.toFixed(2) + 'x';
+  });
+  rateRange.addEventListener('change', save);
 }
 
 document.addEventListener('DOMContentLoaded', init);
