@@ -1084,7 +1084,8 @@
       }
 
       /* Base Finding Card */
-      .tc-card {
+      .tc-card,
+      .tc-risk-item {
         background: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 14px;
@@ -1746,7 +1747,7 @@
     return '<div class="tc-reco tc-reco-pending">Answer each flagged clause to get a recommendation.</div>';
   }
 
-  function getHighestRiskMascot(analysis) {
+  function getHighestRiskMascotFileName(analysis) {
     let hasHigh = false;
     let hasMed = false;
     let hasLow = false;
@@ -1762,17 +1763,18 @@
       });
     }
 
-    let fileName = 'icons/guardian-low-risk.png';
     if (hasHigh) {
-      fileName = 'icons/guardian-high-risk.png';
+      return 'icons/guardian-high-risk.png';
     } else if (hasMed) {
-      fileName = 'icons/guardian-medium-risk.png';
+      return 'icons/guardian-medium-risk.png';
     } else if (hasLow) {
-      fileName = 'icons/guardian-low-risk.png';
-    } else {
-      fileName = 'icons/guardian-neutral.png';
+      return 'icons/guardian-low-risk.png';
     }
+    return 'icons/guardian-neutral.png';
+  }
 
+  function getHighestRiskMascot(analysis) {
+    const fileName = getHighestRiskMascotFileName(analysis);
     if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
       try {
         return chrome.runtime.getURL(fileName);
@@ -1785,7 +1787,10 @@
 
   async function renderUI(analysis, profile, overrides) {
     const root = ensureShadowRoot();
-    const mascotSrc = getHighestRiskMascot(analysis);
+    const mascotFileName = getHighestRiskMascotFileName(analysis);
+    const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
+      ? chrome.runtime.getURL(mascotFileName)
+      : mascotFileName;
 
     if (isMinimized) {
       // Count dealbreakers
@@ -1802,7 +1807,7 @@
       root.innerHTML = `
         <style>${getCSS()}</style>
         <button class="tc-bubble ${dealbreakerCount > 0 ? 'tc-bubble-dealbreaker' : ''}" id="tc-expand-btn">
-          <img class="tc-bubble-mascot" src="${escapeHtml(mascotSrc)}" alt="T&C Guardian" />
+          <img class="tc-bubble-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
           <span>T&C Guardian</span>
           ${dealbreakerCount > 0 ? `<span style="color: #ef4444;">(${dealbreakerCount} ⚠️)</span>` : ''}
         </button>
@@ -1892,7 +1897,7 @@
       }
 
       return `
-        <div class="tc-card ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}">
+        <div class="tc-card tc-risk-item ${riskClass} ${isDealbreaker ? 'tc-card-dealbreaker' : ''}" data-cat="${catKey}">
           <div class="tc-card-header">
             <span class="tc-card-title">${meta.icon} ${escapeHtml(meta.name)}</span>
             ${overrideBadgeHtml}
@@ -1952,14 +1957,14 @@
         <div class="tc-header">
           <div class="tc-header-title-row">
             <span class="tc-logo-badge">
-              <img class="tc-header-mascot" src="${escapeHtml(mascotSrc)}" alt="T&C Guardian" />
+              <img class="tc-header-mascot" src="${escapeHtml((typeof chrome !== 'undefined' && chrome.runtime?.getURL) ? chrome.runtime.getURL(mascotFileName) : mascotSrc)}" alt="T&C Guardian" />
               <span>T&C Guardian</span>
             </span>
             <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
           </div>
           <div class="tc-header-actions">
-            <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
-            <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
+            <button class="tc-icon-btn tc-minimize-btn" id="tc-minimize-btn" title="Minimize">−</button>
+            <button class="tc-icon-btn tc-close-btn" id="tc-close-btn" title="Close">&times;</button>
           </div>
         </div>
 
@@ -1976,16 +1981,22 @@
       </div>
     `;
 
-    // Event Handlers
-    root.getElementById('tc-minimize-btn').addEventListener('click', () => {
-      isMinimized = true;
-      renderUI(analysis, profile, overrides);
-    });
+    // Event Handlers: Manual Minimize and Close Buttons
+    const minBtn = root.getElementById('tc-minimize-btn');
+    if (minBtn) {
+      minBtn.addEventListener('click', () => {
+        isMinimized = true;
+        renderUI(analysis, profile, overrides);
+      });
+    }
 
-    root.getElementById('tc-close-btn').addEventListener('click', () => {
-      isMinimized = true;
-      renderUI(analysis, profile, overrides);
-    });
+    const closeBtn = root.getElementById('tc-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        isMinimized = true;
+        renderUI(analysis, profile, overrides);
+      });
+    }
 
     // View Clause buttons
     root.querySelectorAll('.tc-view-btn').forEach((btn) => {
@@ -1996,13 +2007,18 @@
       });
     });
 
-    // Accept / Reject Buttons
+    // Accept / Reject Buttons: Multi-Question Persistence
+    // Fade out and remove ONLY the specific risk card (.tc-risk-item) that was answered.
+    // Only trigger full overlay collapse/dismissal when the user has answered the final remaining risk card.
     root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         const target = e.currentTarget;
         const catKey = target.getAttribute('data-cat');
         const choice = target.getAttribute('data-choice');
         const isYes = (choice === 'yes');
+
+        if (target.disabled) return;
+        target.disabled = true;
 
         const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
 
@@ -2025,22 +2041,52 @@
         // Save preferences
         await saveStorageData(currentProfile, currentOverrides);
 
-        if (isYes) {
-          // When the user clicks "[ Yes ]" / accepts the risks, automatically close and hide the floating overlay so it gets out of their way.
-          isMinimized = true;
-          const widget = root.querySelector('.tc-widget');
-          if (widget) {
-            widget.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-            widget.style.opacity = '0';
-            widget.style.transform = 'translateY(10px)';
-            setTimeout(() => {
-              renderUI(analysis, currentProfile, currentOverrides);
-            }, 200);
-          } else {
-            renderUI(analysis, currentProfile, currentOverrides);
-          }
-        } else {
-          renderUI(analysis, currentProfile, currentOverrides);
+        // Also notify background worker via SAVE_EXPLICIT_CHOICE
+        if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+          try {
+            chrome.runtime.sendMessage({
+              action: 'SAVE_EXPLICIT_CHOICE',
+              domain: currentDomain,
+              category: catKey,
+              isAccepted: isYes
+            });
+          } catch (err) {}
+        }
+
+        // Target the specific risk card (.tc-risk-item)
+        const card = target.closest('.tc-risk-item') || target.closest('.tc-card');
+        if (card) {
+          card.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.96)';
+
+          setTimeout(() => {
+            card.remove();
+
+            // Check if there are any remaining risk cards
+            const remainingCards = root.querySelectorAll('.tc-risk-item');
+            if (remainingCards.length === 0) {
+              // Final remaining card answered: trigger full overlay collapse/dismissal into minimized bubble
+              isMinimized = true;
+              const widget = root.querySelector('.tc-widget');
+              if (widget) {
+                widget.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+                widget.style.opacity = '0';
+                widget.style.transform = 'translateY(10px)';
+                setTimeout(() => {
+                  renderUI(analysis, currentProfile, currentOverrides);
+                }, 200);
+              } else {
+                renderUI(analysis, currentProfile, currentOverrides);
+              }
+            } else {
+              // Update footer question count
+              const footerCount = root.querySelector('.tc-footer span');
+              if (footerCount) {
+                footerCount.textContent = `${remainingCards.length} active question${remainingCards.length === 1 ? '' : 's'}`;
+              }
+            }
+          }, 250);
         }
       });
     });

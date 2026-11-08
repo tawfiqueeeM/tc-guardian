@@ -1335,51 +1335,90 @@ function computeOverallRisk(data) {
   return { level, count };
 }
 
+const TOOLBAR_ICON_MAP = {
+  HIGH: {
+    "16": "icons/guardian-high-risk.png",
+    "32": "icons/guardian-high-risk.png",
+    "48": "icons/guardian-high-risk.png",
+    "128": "icons/guardian-high-risk.png"
+  },
+  MEDIUM: {
+    "16": "icons/guardian-medium-risk.png",
+    "32": "icons/guardian-medium-risk.png",
+    "48": "icons/guardian-medium-risk.png",
+    "128": "icons/guardian-medium-risk.png"
+  },
+  LOW: {
+    "16": "icons/guardian-low-risk.png",
+    "32": "icons/guardian-low-risk.png",
+    "48": "icons/guardian-low-risk.png",
+    "128": "icons/guardian-low-risk.png"
+  },
+  CLEAN: {
+    "16": "icons/guardian-low-risk.png",
+    "32": "icons/guardian-low-risk.png",
+    "48": "icons/guardian-low-risk.png",
+    "128": "icons/guardian-low-risk.png"
+  },
+  ERROR: {
+    "16": "icons/guardian-neutral.png",
+    "32": "icons/guardian-neutral.png",
+    "48": "icons/guardian-neutral.png",
+    "128": "icons/guardian-neutral.png"
+  },
+  NEUTRAL: {
+    "16": "icons/guardian-neutral.png",
+    "32": "icons/guardian-neutral.png",
+    "48": "icons/guardian-neutral.png",
+    "128": "icons/guardian-neutral.png"
+  }
+};
+
 function updateToolbarIcon(tabId, riskLevel, riskCount = 0) {
   if (typeof chrome === 'undefined' || !chrome.action) return;
-  let iconPath = 'icons/guardian-neutral.png';
+
+  const normalizedLevel = String(riskLevel || 'NEUTRAL').toUpperCase();
+  const iconPathObj = TOOLBAR_ICON_MAP[normalizedLevel] || TOOLBAR_ICON_MAP.NEUTRAL;
+
   let badgeColor = '#64748b';
   let badgeText = '';
 
-  if (riskLevel === 'HIGH') {
-    iconPath = 'icons/guardian-high-risk.png';
+  if (normalizedLevel === 'HIGH') {
     badgeColor = '#dc2626'; // Red for high
     badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
-  } else if (riskLevel === 'MEDIUM') {
-    iconPath = 'icons/guardian-medium-risk.png';
+  } else if (normalizedLevel === 'MEDIUM') {
     badgeColor = '#d97706'; // Amber for medium
     badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
-  } else if (riskLevel === 'LOW') {
-    iconPath = 'icons/guardian-low-risk.png';
+  } else if (normalizedLevel === 'LOW') {
     badgeColor = '#16a34a'; // Green for low
     badgeText = (typeof riskCount === 'number' && riskCount > 0) ? String(riskCount) : '';
-  } else if (riskLevel === 'CLEAN') {
-    iconPath = 'icons/guardian-low-risk.png';
+  } else if (normalizedLevel === 'CLEAN') {
     badgeColor = '#16a34a'; // Green for clean
     badgeText = '';
-  } else if (riskLevel === 'ERROR') {
-    iconPath = 'icons/guardian-neutral.png';
+  } else if (normalizedLevel === 'ERROR') {
     badgeColor = '#dc2626';
     badgeText = '!';
   } else {
     // UNANALYZED, DEFAULT, etc.
-    iconPath = 'icons/guardian-neutral.png';
     badgeColor = '#64748b';
     badgeText = '';
   }
 
-  // Set toolbar icon image with full size dictionary (P2)
+  // Set toolbar icon image explicitly mapping to exact directory filenames (e.g., {"128": "icons/guardian-high-risk.png"})
   if (chrome.action.setIcon) {
     try {
-      chrome.action.setIcon({
-        tabId: tabId,
+      const setIconDetails = {
         path: {
-          "16": iconPath,
-          "32": iconPath,
-          "48": iconPath,
-          "128": iconPath
+          "16": iconPathObj["16"],
+          "32": iconPathObj["32"],
+          "48": iconPathObj["48"],
+          "128": iconPathObj["128"]
         }
-      }, () => {
+      };
+      if (tabId) {
+        setIconDetails.tabId = tabId;
+      }
+      chrome.action.setIcon(setIconDetails, () => {
         if (chrome.runtime.lastError) {
           // Silently swallow errors if tab was closed during icon change
         }
@@ -1392,18 +1431,16 @@ function updateToolbarIcon(tabId, riskLevel, riskCount = 0) {
   // Set numeric badge & background color
   try {
     if (chrome.action.setBadgeText) {
-      chrome.action.setBadgeText({
-        tabId: tabId,
-        text: badgeText
-      }, () => {
+      const badgeDetails = { text: badgeText };
+      if (tabId) badgeDetails.tabId = tabId;
+      chrome.action.setBadgeText(badgeDetails, () => {
         if (chrome.runtime.lastError) {}
       });
     }
     if (chrome.action.setBadgeBackgroundColor && badgeText) {
-      chrome.action.setBadgeBackgroundColor({
-        tabId: tabId,
-        color: badgeColor
-      }, () => {
+      const colorDetails = { color: badgeColor };
+      if (tabId) colorDetails.tabId = tabId;
+      chrome.action.setBadgeBackgroundColor(colorDetails, () => {
         if (chrome.runtime.lastError) {}
       });
     }
