@@ -340,12 +340,29 @@
   /**
    * Detection & Background Pre-Fetcher
    */
+  // Names that also mark a legal page (e.g. "User Agreement", "/policies/", "Acceptable Use")
+  const LEGAL_NAME_REGEX = /user[\s_-]*agreement|service[\s_-]*agreement|agreement|polic(y|ies)|acceptable[\s_-]*use|content[\s_-]*rules|guidelines|disclaimer|cookies?[\s_-]*notice|data[\s_-]*processing/i;
+  const LEGAL_PHRASE_REGEX = /\b(arbitration|governing law|class action|limitation of liability|you agree (to|that)|terminate your account|personal information|indemnif\w+|jurisdiction|warranty|license to)\b/gi;
+
   function isTermsPage() {
     const url = window.location.href;
     const title = document.title || '';
-    const textLen = (document.body && (document.body.innerText || document.body.textContent || '').trim().length) || 0;
-    const isNameMatch = TERMS_REGEX.test(url) || TERMS_REGEX.test(title);
-    return isNameMatch && textLen > 1000;
+    const text = (document.body && (document.body.innerText || document.body.textContent || '').trim()) || '';
+    const textLen = text.length;
+    if (textLen <= 1000) return false;
+
+    // 1. Obvious names in the URL or title (terms, privacy, legal, ...)
+    if (TERMS_REGEX.test(url) || TERMS_REGEX.test(title)) return true;
+
+    // 2. Other legal names (user agreement, policies, ...) need a long page to avoid false positives
+    if ((LEGAL_NAME_REGEX.test(url) || LEGAL_NAME_REGEX.test(title)) && textLen > 3000) return true;
+
+    // 3. Content-based: a long page dense with legal wording is a terms page whatever it is called
+    if (textLen > 5000) {
+      const hits = new Set((text.slice(0, 60000).match(LEGAL_PHRASE_REGEX) || []).map((m) => m.toLowerCase()));
+      if (hits.size >= 4) return true;
+    }
+    return false;
   }
 
   function hasSignupIndicators() {
