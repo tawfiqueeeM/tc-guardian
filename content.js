@@ -1831,6 +1831,22 @@
         color: #94a3b8;
       }
 
+      .tc-settings {
+        padding: 10px 18px;
+        background: rgba(15, 23, 42, 0.9);
+        border-bottom: 1px solid #1e293b;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 12px;
+        color: #cbd5e1;
+      }
+      .tc-set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .tc-set-main { font-weight: 600; color: #f8fafc; }
+      .tc-set-row select, .tc-set-row input[type="range"] { max-width: 150px; }
+      .tc-set-row select { background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 6px; padding: 3px 6px; }
+      .tc-set-test { align-self: flex-start; }
+
       .tc-voice-notice {
         padding: 6px 18px;
         font-size: 11px;
@@ -2027,6 +2043,7 @@
     voiceMode = mode;
     if (notice !== undefined) voiceNotice = notice;
     applyVoiceButtonState();
+    bindSettingsHandlers(root);
   }
 
   function applyVoiceButtonState() {
@@ -2638,6 +2655,7 @@
             <div class="tc-header-actions">
               ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
               ${voiceSupported() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
+              ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-settings-btn" title="Voice settings" aria-expanded="${settingsOpen}">⚙️</button>` : ''}
               <button class="tc-icon-btn" id="tc-minimize-btn" title="Minimize">—</button>
               <button class="tc-icon-btn" id="tc-close-btn" title="Close">&times;</button>
             </div>
@@ -2651,6 +2669,7 @@
             <button class="tc-reset-btn" id="tc-reset-btn">Reset Learned History</button>
           </span>
         </div>
+        ${settingsOpen && voiceSupported() ? buildSettingsHtml() : ''}
         <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
 
         <!-- Dealbreaker Alert Banner -->
@@ -2724,6 +2743,7 @@
       btn.addEventListener('click', () => readOneAloud(btn.getAttribute('data-cat')));
     });
     applyVoiceButtonState();
+    bindSettingsHandlers(root);
 
     // Accept / Reject Buttons
     root.querySelectorAll('.tc-btn-yes, .tc-btn-no').forEach((btn) => {

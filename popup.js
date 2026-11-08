@@ -232,18 +232,23 @@ function closeSettingsView() {
 }
 
 function loadAlwaysShowSetting() {
-  const toggle = document.getElementById('toggleAlwaysShowWidget');
-  if (!toggle) return;
+  const toggle1 = document.getElementById('toggleAlwaysShowWidget');
+  const toggle2 = document.getElementById('toggleAlwaysShowWidgetPref');
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get([STORAGE_KEYS.ALWAYS_SHOW_WIDGET], (res) => {
-      toggle.checked = Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]);
+      const val = Boolean(res && res[STORAGE_KEYS.ALWAYS_SHOW_WIDGET]);
+      if (toggle1) toggle1.checked = val;
+      if (toggle2) toggle2.checked = val;
     });
   } else {
     try {
-      toggle.checked = localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true';
+      const val = localStorage.getItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET) === 'true';
+      if (toggle1) toggle1.checked = val;
+      if (toggle2) toggle2.checked = val;
     } catch {
-      toggle.checked = false;
+      if (toggle1) toggle1.checked = false;
+      if (toggle2) toggle2.checked = false;
     }
   }
 }
@@ -252,6 +257,11 @@ function saveAlwaysShowSetting(enabled) {
   try {
     localStorage.setItem(STORAGE_KEYS.ALWAYS_SHOW_WIDGET, String(enabled));
   } catch {}
+
+  const toggle1 = document.getElementById('toggleAlwaysShowWidget');
+  const toggle2 = document.getElementById('toggleAlwaysShowWidgetPref');
+  if (toggle1) toggle1.checked = Boolean(enabled);
+  if (toggle2) toggle2.checked = Boolean(enabled);
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.set({ [STORAGE_KEYS.ALWAYS_SHOW_WIDGET]: Boolean(enabled) });
@@ -917,11 +927,17 @@ async function init() {
     });
   }
 
-  // Toggle switch listener (Always show widget on page)
+  // Toggle switch listeners (Always show widget on page)
   const toggleAlwaysShow = document.getElementById('toggleAlwaysShowWidget');
+  const toggleAlwaysShowPref = document.getElementById('toggleAlwaysShowWidgetPref');
+  loadAlwaysShowSetting();
   if (toggleAlwaysShow) {
-    loadAlwaysShowSetting();
     toggleAlwaysShow.addEventListener('change', (e) => {
+      saveAlwaysShowSetting(e.target.checked);
+    });
+  }
+  if (toggleAlwaysShowPref) {
+    toggleAlwaysShowPref.addEventListener('change', (e) => {
       saveAlwaysShowSetting(e.target.checked);
     });
   }
