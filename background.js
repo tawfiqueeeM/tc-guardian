@@ -887,7 +887,10 @@ async function queryBrowserAI(text, domain = '') {
     const ai = self?.ai || (typeof window !== 'undefined' ? window?.ai : null);
     if (!ai || !ai.languageModel) return null;
 
-    const capabilities = await ai.languageModel.capabilities();
+    const capabilities = await Promise.race([
+      ai.languageModel.capabilities(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Browser AI capability check timed out')), 1500))
+    ]);
     if (capabilities.available === 'no') return null;
 
     const session = await ai.languageModel.create({
@@ -923,7 +926,10 @@ Terms to analyze:
 ${text.slice(0, 8000)}
 `;
 
-    const rawResponse = await session.prompt(promptText);
+    const rawResponse = await Promise.race([
+      session.prompt(promptText),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Browser AI prompt timed out')), 4000))
+    ]);
     const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
@@ -1105,7 +1111,7 @@ async function queryCloudFallback(text, domain = '') {
   const ringStart = Date.now();
   for (const providerId of fallbackOrder) {
     // Stay inside the 10s overall guarantee: stop trying new providers after ~6s
-    if (Date.now() - ringStart > 6000) break;
+    if (Date.now() - ringStart > 4500) break;
     const normalized = String(providerId).toLowerCase().trim();
 
     try {
@@ -1534,6 +1540,8 @@ if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onRemoved) {
  * Validates payload, stores record, updates toolbar icon/badge, and broadcasts finalized state to content script.
  */
 const autoPopupShown = new Set();
+// tabId -> start time of a scan that has not finished yet (lets the popup wait instead of rescanning)
+const scanInFlight = new Map();
 /**
  * Automatically open the toolbar popup once per tab+page when a scan finds unanswered risks.
  * chrome.action.openPopup may be unavailable or refused (no focused window); failures are ignored.
@@ -1566,6 +1574,8 @@ async function finalizeScan(tabId, scanId, result, context = {}) {
       return { success: false, reason: 'STALE_SCAN_DISCARDED', status: 'STALE' };
     }
   }
+
+  if (tabId) scanInFlight.delete(tabId);
 
   // 2. Strict Result Validation: validate all 5 categories have explicit boolean present
   let status = result?.status || (result?.success ? 'SUCCESS' : 'ERROR');
@@ -1771,6 +1781,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     (async () => {
       if (tabId) {
+        scanInFlight.set(tabId, Date.now());
         await setActiveScanId(tabId, scanId);
       }
 
@@ -1809,7 +1820,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           engine: fallbackRes.engine || 'Timeout Fallback'
         });
         sendOnce(record.status === 'SUCCESS' ? fallbackRes : record);
-      }, 10000);
+      }, 8000);
 
       try {
         // Linked Policy Priority (P3):
@@ -1823,7 +1834,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         if (shouldFetchPolicy) {
           try {
-            const fetchRes = await fetch(policyUrl);
+            const fetchRes = await fetch(policyUrl, { signal: AbortSignal.timeout(5000) });
             if (!fetchRes.ok && fetchRes.status !== 0) {
               throw new Error(`HTTP ${fetchRes.status}: ${fetchRes.statusText}`);
             }
@@ -1940,6 +1951,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     (async () => {
       const record = await tabAnalysisStore.get(tabId);
+      const startedAt = scanInFlight.get(tabId);
+      if (startedAt && Date.now() - startedAt < 15000) {
+        sendResponse({ success: false, status: 'SCANNING', reason: 'SCAN_IN_PROGRESS' });
+        return;
+      }
       if (!record) {
         sendResponse({ success: false, reason: 'NOT_ANALYZED', status: 'UNANALYZED' });
         return;

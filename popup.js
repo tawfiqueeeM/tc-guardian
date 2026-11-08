@@ -317,6 +317,7 @@ async function fetchActiveTab() {
 
 // Scan automatically the first time the popup opens on a page that has no result yet
 let autoScanTried = false;
+let scanPolls = 0;
 function autoScanOnce() {
   if (autoScanTried) return;
   autoScanTried = true;
@@ -339,6 +340,15 @@ async function loadTabAnalysis() {
     if (chrome.runtime.lastError || !res) {
       renderUnanalyzedState(activeTabInfo.domain);
       autoScanOnce();
+      return;
+    }
+    if (res.status === 'SCANNING') {
+      // A scan (usually the automatic one from the page) is already running: wait for it
+      scanPolls += 1;
+      if (scanPolls > 20) { renderUnanalyzedState(activeTabInfo.domain); autoScanOnce(); return; }
+      const subtext = document.getElementById('heroSubtext');
+      if (subtext) subtext.textContent = 'Scanning terms and privacy policies...';
+      setTimeout(loadTabAnalysis, 700);
       return;
     }
     if (res.status === 'ERROR' || res.riskLevel === 'ERROR' || res.reason === 'POLICY_FETCH_FAILED') {
