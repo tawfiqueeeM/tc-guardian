@@ -118,6 +118,7 @@
   let sourceClauses = {};
   let isMinimized = null;
   let isDismissedForSession = false;
+  let userManuallyExpanded = false;
   let shadowRoot = null;
   const currentDomain = (window.location.hostname || 'localhost').replace(/^www\./, '');
 
@@ -968,7 +969,14 @@
 
       /* Base Floating Widget Container */
       .tc-widget-container {
-        display: block;
+        display: block !important;
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        width: auto !important;
+        height: auto !important;
+        z-index: 2147483647 !important;
+        overflow: visible !important;
       }
 
       .tc-widget {
@@ -984,7 +992,7 @@
         border: 1px solid #e2e8f0;
         border-radius: 18px;
         box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05);
-        display: flex;
+        display: flex !important;
         flex-direction: column;
         overflow: hidden;
         animation: tc-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -2199,7 +2207,7 @@
   }
 
   function buildSettingsHtml() {
-    const voices = (window.speechSynthesis.getVoices() || []).filter((v) => /^en/i.test(v.lang));
+    const voices = (typeof window !== 'undefined' && window.speechSynthesis?.getVoices ? window.speechSynthesis.getVoices() : []).filter((v) => /^en/i.test(v.lang));
     const voiceOptions = ['<option value="">Best available</option>']
       .concat(voices.map((v) => `<option value="${escapeHtml(v.name)}" ${v.name === voiceName ? 'selected' : ''}>${escapeHtml(v.name)}</option>`))
       .join('');
@@ -2442,7 +2450,7 @@
     lastProfile = profile;
     lastOverrides = overrides;
 
-    if (isDismissedForSession) {
+    if (isDismissedForSession && !userManuallyExpanded) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
       if (shadowRoot) {
@@ -2470,7 +2478,7 @@
 
     // If total number of unacknowledged active risks is 0, check alwaysShowWidget override
     if (unacknowledgedActiveCategories.length === 0) {
-      if (!alwaysShowWidget) {
+      if (!alwaysShowWidget && !userManuallyExpanded) {
         if (shadowRoot) {
           shadowRoot.innerHTML = '';
         }
@@ -2480,19 +2488,26 @@
         }
         return;
       }
-      if (isMinimized === null || isMinimized === undefined) {
+      if (!userManuallyExpanded && (isMinimized === null || isMinimized === undefined)) {
         isMinimized = true;
       }
     } else {
-      if (isMinimized === null || isMinimized === undefined) {
+      if (!userManuallyExpanded && (isMinimized === null || isMinimized === undefined)) {
         isMinimized = false;
       }
     }
 
+    // Force expanded state and clear dismissal if user explicitly clicked the bubble
+    if (userManuallyExpanded) {
+      isMinimized = false;
+      isDismissedForSession = false;
+    }
+
     const root = ensureShadowRoot();
     const host = document.getElementById('tc-guardian-host');
-    if (host && host.style.display === 'none') {
-      host.style.display = '';
+    if (host) {
+      host.style.setProperty('display', 'block', 'important');
+      host.style.setProperty('visibility', 'visible', 'important');
     }
     const mascotFileName = getHighestRiskMascotFileName(analysis);
     const mascotSrc = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
@@ -2521,10 +2536,45 @@
         </div>
       `;
 
-      root.getElementById('tc-expand-btn').addEventListener('click', () => {
-        isMinimized = false;
-        renderUI(analysis, profile, overrides);
-      });
+      // Ensure clicking the floating bubble expands the widget
+      const shadow = root;
+      const bubble = shadow.querySelector('.tc-bubble');
+      if (bubble) {
+        bubble.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+
+          // Force un-minimized state and clear session dismissal
+          isMinimized = false;
+          isDismissedForSession = false;
+          userManuallyExpanded = true;
+
+          // Force the host and parent .tc-widget-container to fully expand and become visible
+          const hostEl = document.getElementById('tc-guardian-host');
+          if (hostEl) {
+            hostEl.style.setProperty('display', 'block', 'important');
+            hostEl.style.setProperty('visibility', 'visible', 'important');
+          }
+          const parentContainer = bubble.closest('.tc-widget-container') || shadow.querySelector('.tc-widget-container');
+          if (parentContainer) {
+            parentContainer.style.setProperty('display', 'block', 'important');
+            parentContainer.style.setProperty('visibility', 'visible', 'important');
+          }
+          const containers = [
+            shadow.querySelector('.tc-widget-container'),
+            document.querySelector('.tc-widget-container')
+          ];
+          containers.forEach((el) => {
+            if (el) {
+              el.style.setProperty('display', 'block', 'important');
+              el.style.setProperty('visibility', 'visible', 'important');
+            }
+          });
+
+          // Render the expanded UI using cached or current state
+          renderUI(analysisData || analysis, lastProfile || profile, lastOverrides || overrides);
+        });
+      }
 
       const bubbleCloseBtn = root.querySelector('.tc-bubble-close');
       if (bubbleCloseBtn) {
@@ -2532,6 +2582,7 @@
           e.stopPropagation();
           e.preventDefault();
           isDismissedForSession = true;
+          userManuallyExpanded = false;
           const containers = [
             root.querySelector('.tc-widget-container'),
             document.querySelector('.tc-widget-container'),
@@ -2545,9 +2596,24 @@
       return;
     }
 
-    // Strictly sort the unacknowledged risk cards by severity: High-risk first, Medium-risk second, Low-risk last
+    // Determine which risk categories to display:
+    // If there are unacknowledged active risks, display those.
+    // If all active risks were acknowledged (or none left), but the user expanded the widget,
+    // display all present risk categories (or all monitored categories if alwaysShow or manually expanded),
+    // so the question toggles (Yes/No), original clauses, and guides are fully accessible!
+    let categoriesToDisplay = [...unacknowledgedActiveCategories];
+    if (categoriesToDisplay.length === 0) {
+      const presentCategories = CATEGORIES.filter((catKey) => analysis?.categories?.[catKey]?.present === true);
+      if (presentCategories.length > 0) {
+        categoriesToDisplay = presentCategories;
+      } else if (alwaysShowWidget || userManuallyExpanded) {
+        categoriesToDisplay = [...CATEGORIES];
+      }
+    }
+
+    // Strictly sort the risk cards by severity: High-risk first, Medium-risk second, Low-risk last
     const severityRank = { HIGH: 1, MEDIUM: 2, LOW: 3 };
-    const sortedCategories = [...unacknowledgedActiveCategories].sort((a, b) => {
+    const sortedCategories = [...categoriesToDisplay].sort((a, b) => {
       const rankA = severityRank[CATEGORY_META[a]?.riskLevel] || 2;
       const rankB = severityRank[CATEGORY_META[b]?.riskLevel] || 2;
       return rankA - rankB;
@@ -2620,7 +2686,7 @@
             <span class="tc-card-title">${meta.icon} ${escapeHtml(meta.name)}</span>
             <span class="tc-risk-tag tc-risk-${CATEGORY_RISK[catKey]}">${CATEGORY_RISK[catKey] === 'high' ? 'High risk' : 'Medium risk'}</span>
             ${overrideBadgeHtml}
-            ${voiceOn() ? `<button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>` : ''}
+            <button class="tc-icon-btn tc-speak-btn" data-cat="${catKey}" title="Read this clause aloud">🔊</button>
           </div>
 
           <div class="tc-card-question">Is this risk okay with you?</div>
@@ -2691,15 +2757,15 @@
               <span class="tc-domain-tag">${escapeHtml(currentDomain)}</span>
             </div>
             <div class="tc-header-actions">
-              ${voiceOn() ? `<button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>` : ''}
-              ${voiceOn() && recognitionCtor() ? `<button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>` : ''}
-              ${voiceSupported() ? `<button class="tc-icon-btn" id="tc-settings-btn" title="Voice settings" aria-expanded="${settingsOpen}">⚙️</button>` : ''}
+              <button class="tc-icon-btn" id="tc-voice-read" title="Read flagged clauses aloud">🔊</button>
+              <button class="tc-icon-btn" id="tc-voice-answer" title="Answer by voice (say yes / no / skip)">🎤</button>
+              <button class="tc-icon-btn" id="tc-settings-btn" title="Voice settings" aria-expanded="${settingsOpen}">⚙️</button>
               <button class="tc-icon-btn tc-minimize-btn" id="tc-minimize-btn" title="Minimize">−</button>
               <button class="tc-icon-btn tc-close-btn" id="tc-close-btn" title="Close">&times;</button>
             </div>
           </div>
 
-          ${settingsOpen && voiceSupported() ? buildSettingsHtml() : ''}
+          ${settingsOpen ? buildSettingsHtml() : ''}
           <div class="tc-voice-notice" id="tc-voice-notice" style="display: none;"></div>
 
           <!-- Dealbreaker Alert Banner -->
@@ -2729,6 +2795,7 @@
     if (minBtn) {
       minBtn.addEventListener('click', () => {
         isMinimized = true;
+        userManuallyExpanded = false;
         renderUI(analysis, profile, overrides);
       });
     }
@@ -2737,6 +2804,7 @@
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
         isMinimized = true;
+        userManuallyExpanded = false;
         renderUI(analysis, profile, overrides);
       });
     }
@@ -2830,6 +2898,7 @@
             if (remainingCards.length === 0) {
               // Final remaining card answered: trigger full overlay collapse/dismissal into minimized bubble
               isMinimized = true;
+              userManuallyExpanded = false;
               const widget = root.querySelector('.tc-widget');
               if (widget) {
                 widget.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
@@ -2941,7 +3010,7 @@
       return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
     }).length;
 
-    if (unackCount === 0 && !alwaysShowWidget) {
+    if (unackCount === 0 && !alwaysShowWidget && !userManuallyExpanded) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
       if (shadowRoot) shadowRoot.innerHTML = '';
@@ -2996,7 +3065,7 @@
   }
 
   async function handleFinalizedAnalysis(finalizedResult) {
-    if (isDismissedForSession) {
+    if (isDismissedForSession && !userManuallyExpanded) {
       return;
     }
     if (!finalizedResult || !finalizedResult.success || !finalizedResult.data) {
@@ -3016,7 +3085,7 @@
       return Boolean(catData && catData.present === true && catData.acknowledged !== true && !hasOverride);
     }).length;
 
-    if (unackCount === 0 && !alwaysShowWidget) {
+    if (unackCount === 0 && !alwaysShowWidget && !userManuallyExpanded) {
       const host = document.getElementById('tc-guardian-host');
       if (host) host.style.display = 'none';
       if (shadowRoot) shadowRoot.innerHTML = '';
