@@ -207,30 +207,15 @@
     const no = Number(catStats.no) || 0;
     const total = yes + no;
 
-    // 2. ASSUMED_YES: yes >= 3 AND yes / (yes + no) >= 0.75
-    if (total > 0 && yes >= 3 && (yes / total) >= 0.75) {
-      return {
-        code: 'ASSUMED_YES',
-        badgeText: `Auto-Assumed YES based on your behavior (Accepted ${yes} times)`,
-        badgeType: 'assumed-yes',
-        overrideValue: null
-      };
+    // 2. Explicit-choice model: never assume an answer. Show history only.
+    let historyText = '';
+    if (total > 0) {
+      const rejectPct = Math.round((no / total) * 100);
+      historyText = ` — Historically rejected ${rejectPct}% of the time (${total} ${total === 1 ? 'answer' : 'answers'})`;
     }
-
-    // 3. DEALBREAKER: no >= 2 AND no / (yes + no) >= 0.60
-    if (total > 0 && no >= 2 && (no / total) >= 0.60) {
-      return {
-        code: 'DEALBREAKER',
-        badgeText: '⚠️ DEALBREAKER — You normally reject this',
-        badgeType: 'dealbreaker',
-        overrideValue: null
-      };
-    }
-
-    // 4. Default: NEW_QUESTION
     return {
       code: 'NEW_QUESTION',
-      badgeText: 'Important Question — Needs Your Answer',
+      badgeText: 'Needs Your Answer' + historyText,
       badgeType: 'new-question',
       overrideValue: null
     };
@@ -1102,10 +1087,10 @@
     const answered = presentCategories.filter((c) => Object.prototype.hasOwnProperty.call(domainOverrides, c));
 
     if (rejected.some((c) => CATEGORY_RISK[c] === 'high')) {
-      return { cls: 'tc-reco-danger', text: '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.', spoken: 'High risk violation detected. Proceeding is strongly discouraged.' };
+      return { cls: 'tc-reco-danger', text: '🛑 High-Risk Violation Detected: Proceeding is strongly discouraged.', spoken: 'High risk violation detected, proceeding is strongly discouraged.' };
     }
     if (rejected.length > 0) {
-      return { cls: 'tc-reco-warn', text: '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.', spoken: 'Minor risk detected. Review the highlighted clauses before proceeding.' };
+      return { cls: 'tc-reco-warn', text: '⚠️ Minor Risk Detected: Review highlighted clauses before proceeding.', spoken: 'Minor risk detected, review the highlighted clauses before proceeding.' };
     }
     if (answered.length === presentCategories.length) {
       return { cls: 'tc-reco-safe', text: '✅ Safe to Proceed.', spoken: 'Safe to proceed.' };
@@ -1187,6 +1172,7 @@
 
   function stopVoice() {
     voiceCancelled = true;
+    stopTtsAudio();
     try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
     if (activeRecognition) {
       try { activeRecognition.abort(); } catch (e) { /* ignore */ }
@@ -1195,16 +1181,90 @@
     setVoiceMode(null, '');
   }
 
-  function speak(text) {
+  // ElevenLabs playback (audio is fetched by background.js via TTS_SPEAK).
+  // Any failure resolves false so speak() falls back to the browser voice.
+  let ttsAudio = null;
+  let ttsDisabled = false; // set after a hard failure (no key / quota) to avoid retry delays
+
+  function stopTtsAudio() {
+    if (ttsAudio) {
+      try { ttsAudio.pause(); } catch (e) { /* ignore */ }
+      ttsAudio = null;
+    }
+  }
+
+  function speakElevenLabs(text) {
+    return new Promise((resolve) => {
+      if (ttsDisabled || !chrome.runtime || !chrome.runtime.sendMessage) { resolve(false); return; }
+      let settled = false;
+      const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+      const timer = setTimeout(() => done(false), 10000);
+      try {
+        chrome.runtime.sendMessage({ action: 'TTS_SPEAK', text: text.slice(0, 1000) }, (res) => {
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !res || !res.success || !res.audio) {
+            if (res && res.fatal) ttsDisabled = true;
+            done(false);
+            return;
+          }
+          if (voiceCancelled) { done(true); return; }
+          const audio = new Audio('data:' + (res.mime || 'audio/mpeg') + ';base64,' + res.audio);
+          ttsAudio = audio;
+          audio.onended = () => { ttsAudio = null; done(true); };
+          audio.onerror = () => { ttsAudio = null; done(false); };
+          audio.play().catch(() => { ttsAudio = null; done(false); });
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        done(false);
+      }
+    });
+  }
+
+  // One fixed browser voice for the whole session (used only when ElevenLabs is unavailable).
+  let pinnedBrowserVoice = null;
+  function pickBrowserVoice() {
+    if (pinnedBrowserVoice) return pinnedBrowserVoice;
+    const voices = window.speechSynthesis.getVoices() || [];
+    pinnedBrowserVoice = voices.find((v) => /^en[-_]US/i.test(v.lang) && v.localService) ||
+      voices.find((v) => /^en/i.test(v.lang)) || voices[0] || null;
+    return pinnedBrowserVoice;
+  }
+
+  function speakBrowser(text) {
     return new Promise((resolve) => {
       if (!voiceSupported() || !text) { resolve(); return; }
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = document.documentElement.lang || 'en-US';
+      u.lang = 'en-US';
       u.rate = 1;
+      u.pitch = 1;
+      const v = pickBrowserVoice();
+      if (v) u.voice = v;
       u.onend = () => resolve();
       u.onerror = () => resolve();
       window.speechSynthesis.speak(u);
     });
+  }
+
+  // The voice must stay constant: the first engine that works is locked in for
+  // the whole page session. Once ElevenLabs has spoken, we never switch to the
+  // browser voice mid-conversation (a failed line is retried once, then skipped).
+  let voiceEngine = null; // null | 'eleven' | 'browser'
+
+  async function speak(text) {
+    if (!text) return;
+    if (voiceEngine !== 'browser') {
+      let ok = await speakElevenLabs(text);
+      if (!ok && voiceEngine === 'eleven' && !ttsDisabled && !voiceCancelled) ok = await speakElevenLabs(text);
+      if (ok) { voiceEngine = 'eleven'; return; }
+      if (voiceEngine === 'eleven') {
+        if (!voiceCancelled) setVoiceMode(voiceMode, 'Voice unavailable right now — skipped to keep the same voice.');
+        return;
+      }
+      voiceEngine = 'browser'; // ElevenLabs never worked on this page: use one browser voice throughout
+    }
+    if (voiceCancelled) return;
+    await speakBrowser(text);
   }
 
   function getPresentCategories() {
@@ -1318,25 +1378,31 @@
   let lastProfile = null;
   let lastOverrides = null;
 
+  let choiceBusy = false;
   async function recordChoice(catKey, isYes) {
-    const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+    if (choiceBusy) return; // ignore rapid double-clicks
+    choiceBusy = true;
+    try {
+      const { profile: currentProfile, overrides: currentOverrides } = await getStorageData();
+      const prev = currentOverrides[currentDomain] && currentOverrides[currentDomain][catKey];
 
-    if (!currentProfile[catKey]) {
-      currentProfile[catKey] = { yes: 0, no: 0 };
-    }
-    if (isYes) {
-      currentProfile[catKey].yes = (currentProfile[catKey].yes || 0) + 1;
-    } else {
-      currentProfile[catKey].no = (currentProfile[catKey].no || 0) + 1;
-    }
+      // Re-clicking the same answer must not inflate history counts
+      if (prev !== isYes) {
+        if (!currentProfile[catKey]) currentProfile[catKey] = { yes: 0, no: 0 };
+        const st = currentProfile[catKey];
+        // Changing an answer on this site replaces the earlier vote
+        if (prev === true) st.yes = Math.max(0, (st.yes || 0) - 1);
+        if (prev === false) st.no = Math.max(0, (st.no || 0) - 1);
+        if (isYes) st.yes = (st.yes || 0) + 1; else st.no = (st.no || 0) + 1;
 
-    if (!currentOverrides[currentDomain]) {
-      currentOverrides[currentDomain] = {};
+        if (!currentOverrides[currentDomain]) currentOverrides[currentDomain] = {};
+        currentOverrides[currentDomain][catKey] = isYes;
+        await saveStorageData(currentProfile, currentOverrides);
+      }
+      renderUI(currentAnalysis, currentProfile, currentOverrides);
+    } finally {
+      choiceBusy = false;
     }
-    currentOverrides[currentDomain][catKey] = isYes;
-
-    await saveStorageData(currentProfile, currentOverrides);
-    renderUI(currentAnalysis, currentProfile, currentOverrides);
   }
 
   async function renderUI(analysis, profile, overrides) {
@@ -1545,7 +1611,18 @@
   /**
    * Main Controller Initialization
    */
+  let initStarted = false;
   async function init() {
+    if (initStarted) return;
+    initStarted = true;
+    try {
+      await runInit();
+    } catch (e) {
+      console.warn('[T&C Guardian] init failed:', e);
+    }
+  }
+
+  async function runInit() {
     let rawText = '';
     let remoteUrl = null;
 
@@ -1598,6 +1675,7 @@
 
   // Stop any speech when leaving the page
   window.addEventListener('pagehide', () => {
+    stopTtsAudio();
     try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
   });
 
